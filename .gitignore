@@ -1,0 +1,6 @@
+# IDE
+.cursor/
+.markdownlint.json
+
+# Environment variables
+.env
