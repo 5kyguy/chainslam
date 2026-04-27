@@ -22,7 +22,7 @@ export async function createApp() {
 
   const agentService = new AgentService(config);
 
-  app.decorate("matchService", createMatchService(config));
+  app.decorate("matchService", createMatchService(config, agentService));
   app.decorate("agentService", agentService);
   await app.register(cors, { origin: config.corsOrigin });
   await app.register(websocket);
