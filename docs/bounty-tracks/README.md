@@ -6,8 +6,6 @@ This folder contains cleaned partner bounty notes sourced from the ETHGlobal Ope
 
 - [0G](./0g.md)
 - [Uniswap Foundation](./uniswap.md)
-- [Gensyn](./gensyn.md)
-- [ENS](./ens.md)
 - [KeeperHub](./keeperhub.md)
 
 ## Source

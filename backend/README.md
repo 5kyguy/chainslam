@@ -25,17 +25,21 @@ Copy `.env.example` and adjust as needed:
 
 ### REST
 
-- `POST /api/matches`
-- `GET /api/matches/:id`
-- `GET /api/matches/:id/trades`
-- `GET /api/matches/:id/feed`
-- `POST /api/matches/:id/stop`
-- `GET /api/strategies`
-- `GET /api/leaderboard`
+| Endpoint | Purpose | Typical frontend use |
+| --- | --- | --- |
+| `POST /api/matches` | Create a new simulated match and start its lifecycle loop. | Called from "Start Match" action. |
+| `GET /api/matches/:id` | Return current match snapshot (status, PnL, time remaining, contenders). | Poll or refresh current match state view. |
+| `GET /api/matches/:id/trades` | Return executed trade history for the match. | Populate trade history panel/table. |
+| `GET /api/matches/:id/feed` | Return decision feed events (`buy`/`sell`/`hold` reasoning). | Populate live decision feed list. |
+| `POST /api/matches/:id/stop` | Stop an active match before natural completion. | Called from "Stop Match" control. |
+| `GET /api/strategies` | List available strategy options. | Build pre-match strategy selectors/dropdowns. |
+| `GET /api/leaderboard` | Return historical/derived ranking summary. | Populate leaderboard page/widget. |
 
 ### WebSocket
 
-- `WS /ws/matches/:id`
+| Endpoint | Purpose | Typical frontend use |
+| --- | --- | --- |
+| `WS /ws/matches/:id` | Stream live updates for one match. Sends immediate snapshot on connect, then incremental events. | Keep UI in sync without polling (`snapshot`, `decision`, `trade_executed`, `completed`, `stopped`). |
 
 Event envelope shape:
 
@@ -47,6 +51,13 @@ Event envelope shape:
   "payload": {}
 }
 ```
+
+Notes:
+
+- `snapshot` payload is the full current match state.
+- `decision` payload represents contender intent and reasoning.
+- `trade_executed` payload represents simulated execution result.
+- `completed` and `stopped` are terminal lifecycle events.
 
 Decision event payload:
 
@@ -75,6 +86,27 @@ Trade event payload:
   "timestamp": "2026-04-27T07:00:00.000Z"
 }
 ```
+
+## Adding New Endpoints (Documentation Rules)
+
+If you add a new API endpoint, update this README in the same PR. Follow this checklist:
+
+1. Add the endpoint to the appropriate table (`REST` or `WebSocket`).
+2. Include:
+   - exact method + path
+   - one-line purpose (what it does)
+   - one-line frontend usage (where/why it is called)
+3. If request/response shapes are non-trivial, add a JSON example below the table.
+4. If it emits or changes WS events, update:
+   - event envelope docs
+   - event type notes
+   - smoke test expectations in `tests/smoke.ts` when relevant
+5. Keep naming consistent:
+   - resource-first paths (for example, `/api/matches/:id/...`)
+   - plural resource nouns (`matches`, `strategies`, `leaderboard`)
+6. Prefer additive changes:
+   - avoid silently changing existing payload fields
+   - if a breaking contract change is unavoidable, call it out explicitly in this README under a short "Breaking Changes" note.
 
 ## Validation / QA
 
