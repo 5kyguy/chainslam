@@ -1,6 +1,7 @@
-import type { FeedEvent, LeaderboardEntry, MatchState, WsEnvelope } from "../types.js";
+import type { AgentState, FeedEvent, LeaderboardEntry, MatchState, WsEnvelope } from "../types.js";
 
 export class InMemoryStore {
+  public readonly agentsById = new Map<string, AgentState>();
   public readonly matchesById = new Map<string, MatchState>();
   public readonly tradeHistoryByMatchId = new Map<string, FeedEvent[]>();
   public readonly decisionFeedByMatchId = new Map<string, FeedEvent[]>();

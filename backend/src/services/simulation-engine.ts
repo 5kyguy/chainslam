@@ -39,8 +39,8 @@ export class SimulationEngine {
       timeRemainingSeconds: duration,
       ethPrice: 3400,
       contenders: {
-        A: { name: input.strategyA, pnlPct: 0, portfolioUsd: capital, trades: 0 },
-        B: { name: input.strategyB, pnlPct: 0, portfolioUsd: capital, trades: 0 }
+        A: { name: input.agentA, pnlPct: 0, portfolioUsd: capital, trades: 0 },
+        B: { name: input.agentB, pnlPct: 0, portfolioUsd: capital, trades: 0 }
       }
     };
 

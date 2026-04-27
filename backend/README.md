@@ -123,3 +123,44 @@ The smoke script verifies:
 3. Feed and trade retrieval
 4. Stop endpoint
 5. Leaderboard retrieval
+
+## Match Simulation Script
+
+After starting the backend, run:
+
+```bash
+npm run simulate:match
+```
+
+What it does:
+
+1. Calls `POST /api/agents` twice to create two agents.
+2. Calls `POST /api/matches` to start a match.
+3. Subscribes to `WS /ws/matches/:id`.
+4. Pretty-prints websocket JSON events (`snapshot`, `decision`, `trade_executed`, `completed`/`stopped`).
+5. Prints final match results summary (status, winner, PnL, feed/trade counts).
+
+### Silent mode
+
+For service/integration testing where you do not want websocket output:
+
+```bash
+npm run simulate:match -- --silent
+```
+
+`--silent` behavior:
+
+- still logs API call responses for both agent creation calls and match creation
+- does not subscribe to websocket events
+- exits immediately after API setup calls
+
+### Optional flags
+
+```bash
+npm run simulate:match -- --base-url=http://127.0.0.1:8787 --duration=45 --token-pair=WETH/USDC --starting-capital=1000
+```
+
+- `--base-url` (default: `http://127.0.0.1:8787`)
+- `--duration` seconds (minimum: `30`)
+- `--token-pair` (default: `WETH/USDC`)
+- `--starting-capital` USD (minimum: `10`)

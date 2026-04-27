@@ -16,12 +16,28 @@ async function run() {
     throw new Error("Expected at least two strategies");
   }
 
+  const agentA = await fetch(`${httpBase}/api/agents`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: strategies[0].name, strategy: strategies[0].id }),
+  }).then((r) => r.json());
+
+  const agentB = await fetch(`${httpBase}/api/agents`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: strategies[1].name, strategy: strategies[1].id }),
+  }).then((r) => r.json());
+
+  if (!agentA?.id || !agentB?.id) {
+    throw new Error("Agent creation failed");
+  }
+
   const created = await fetch(`${httpBase}/api/matches`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      strategyA: strategies[0].name,
-      strategyB: strategies[1].name,
+      agentA: agentA.id,
+      agentB: agentB.id,
       tokenPair: "WETH/USDC",
       startingCapitalUsd: 1000,
       durationSeconds: 60

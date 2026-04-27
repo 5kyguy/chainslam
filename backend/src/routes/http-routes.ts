@@ -12,8 +12,8 @@ export async function registerHttpRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Body: MatchCreateRequest }>("/api/matches", { schema: matchCreateSchema }, async (request, reply) => {
     const body = request.body;
     const created = app.matchService.createMatch({
-      strategyA: body.strategyA,
-      strategyB: body.strategyB,
+      agentA: body.agentA,
+      agentB: body.agentB,
       tokenPair: body.tokenPair,
       startingCapitalUsd: body.startingCapitalUsd ?? 1000,
       durationSeconds: body.durationSeconds ?? 300
