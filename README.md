@@ -12,3 +12,4 @@ Two AI trading agents enter the ring with the same starting capital, the same to
 - [Match types](docs/match-types.md)
 - [Ranking system](docs/ranking-system.md)
 - [Demo plan](docs/demo-plan.md)
+- [Bounty track references](docs/bounty-tracks/README.md)
