@@ -5,6 +5,7 @@ import { store } from "../store/in-memory-store.js";
 import { STRATEGIES } from "./strategy-catalog.js";
 import type { AgentService } from "./agent-service.js";
 import type { MatchService } from "./match-service.js";
+import type { UniswapClient } from "../integrations/uniswap.js";
 import type {
   ContenderState,
   DecisionEvent,
@@ -27,7 +28,7 @@ interface ContenderRuntime {
 }
 
 const TICK_MS = 10_000;
-const INITIAL_ETH_PRICE = 3400;
+const FALLBACK_INITIAL_PRICE = 3400;
 
 export class RealMatchService implements MatchService {
   private readonly runtimes = new Map<string, { a: ContenderRuntime; b: ContenderRuntime }>();
@@ -37,6 +38,7 @@ export class RealMatchService implements MatchService {
   constructor(
     private readonly config: AppConfig,
     private readonly agentService: AgentService,
+    private readonly uniswap?: UniswapClient,
   ) {}
 
   createMatch(input: MatchCreateRequest): MatchState {
@@ -55,6 +57,8 @@ export class RealMatchService implements MatchService {
     const capital = input.startingCapitalUsd ?? 1000;
     const id = `match_${randomUUID().slice(0, 8)}`;
 
+    const initialPrice = this.lastKnownPrice ?? FALLBACK_INITIAL_PRICE;
+
     const match: MatchState = {
       id,
       status: "created",
@@ -65,7 +69,7 @@ export class RealMatchService implements MatchService {
       startingCapitalUsd: capital,
       durationSeconds: duration,
       timeRemainingSeconds: duration,
-      ethPrice: INITIAL_ETH_PRICE,
+      ethPrice: initialPrice,
       contenders: {
         A: { name: agentA.name, pnlPct: 0, portfolioUsd: capital, trades: 0 },
         B: { name: agentB.name, pnlPct: 0, portfolioUsd: capital, trades: 0 },
@@ -91,7 +95,7 @@ export class RealMatchService implements MatchService {
       },
     });
 
-    this.priceHistories.set(id, [INITIAL_ETH_PRICE]);
+    this.priceHistories.set(id, [initialPrice]);
     this.tickNumbers.set(id, 0);
 
     this.agentService.setStatus(agentA.id, "in_match");
@@ -161,6 +165,8 @@ export class RealMatchService implements MatchService {
     }
   }
 
+  private lastKnownPrice: number | null = null;
+
   private async tick(matchId: string): Promise<void> {
     const match = store.matchesById.get(matchId);
     const pair = this.runtimes.get(matchId);
@@ -175,14 +181,15 @@ export class RealMatchService implements MatchService {
 
     const totalTicks = Math.ceil(match.durationSeconds / (TICK_MS / 1000));
     const priceHistory = this.priceHistories.get(matchId) ?? [];
-    const currentPrice = priceHistory[priceHistory.length - 1] ?? INITIAL_ETH_PRICE;
+    const currentPrice = priceHistory[priceHistory.length - 1] ?? FALLBACK_INITIAL_PRICE;
 
     await this.evaluateContender(matchId, match, pair.a, "A", currentPrice, priceHistory, tickNum, totalTicks);
     await this.evaluateContender(matchId, match, pair.b, "B", currentPrice, priceHistory, tickNum, totalTicks);
 
-    const newPrice = this.simulatePriceMove(currentPrice);
+    const newPrice = await this.fetchPrice(currentPrice, match.tokenPair);
     priceHistory.push(newPrice);
     match.ethPrice = newPrice;
+    this.lastKnownPrice = newPrice;
 
     this.recalcPortfolios(match, pair);
 
@@ -195,6 +202,24 @@ export class RealMatchService implements MatchService {
       this.publishEnvelope(matchId, "completed", match);
       this.updateStatsAndLeaderboard(match, pair);
     }
+  }
+
+  private async fetchPrice(fallbackPrice: number, tokenPair: string): Promise<number> {
+    if (!this.uniswap) {
+      return this.simulatePriceMove(fallbackPrice);
+    }
+
+    try {
+      const [base, quote] = tokenPair.split("/");
+      const result = await this.uniswap.getPrice(quote ?? "USDC", base ?? "WETH");
+      if (result.price > 0 && Number.isFinite(result.price)) {
+        return Number(result.price.toFixed(2));
+      }
+    } catch (err) {
+      console.error("[UniswapClient] price fetch failed, using fallback:", err);
+    }
+
+    return this.simulatePriceMove(fallbackPrice);
   }
 
   private async evaluateContender(

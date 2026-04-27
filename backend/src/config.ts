@@ -12,6 +12,15 @@ export interface AppConfig {
     model: string;
     baseUrl: string;
   };
+  uniswap: {
+    enabled: boolean;
+    apiKey: string;
+    baseUrl: string;
+    chainId: number;
+    swapperAddress: string;
+    timeoutMs: number;
+    maxRetries: number;
+  };
 }
 
 function envNumber(name: string, fallback: number): number {
@@ -42,6 +51,15 @@ export function getConfig(): AppConfig {
       apiKey: process.env.LLM_API_KEY ?? "",
       model: process.env.LLM_MODEL ?? "gpt-4o-mini",
       baseUrl: process.env.LLM_BASE_URL ?? defaultBaseUrl,
+    },
+    uniswap: {
+      enabled: process.env.UNISWAP_ENABLED === "true",
+      apiKey: process.env.UNISWAP_API_KEY ?? "",
+      baseUrl: process.env.UNISWAP_BASE_URL ?? "https://trade-api.gateway.uniswap.org/v1",
+      chainId: envNumber("UNISWAP_CHAIN_ID", 1),
+      swapperAddress: process.env.UNISWAP_SWAPPER_ADDRESS ?? "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+      timeoutMs: envNumber("UNISWAP_TIMEOUT_MS", 15000),
+      maxRetries: envNumber("UNISWAP_MAX_RETRIES", 2),
     },
   };
 }
