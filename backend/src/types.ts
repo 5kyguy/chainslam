@@ -96,6 +96,26 @@ export interface LeaderboardEntry {
   matchesPlayed: number;
 }
 
+export interface TickContext {
+  tokenPair: string;
+  ethPrice: number;
+  priceHistory: number[];
+  usdcBalance: number;
+  ethBalance: number;
+  portfolioUsd: number;
+  pnlPct: number;
+  tradeCount: number;
+  tickNumber: number;
+  ticksRemaining: number;
+}
+
+export interface StrategySignal {
+  action: DecisionAction;
+  amount: number;
+  reasoning: string;
+  confidence: number;
+}
+
 export interface WsEnvelope {
   event: "snapshot" | "decision" | "trade_executed" | "completed" | "stopped";
   match_id: string;
