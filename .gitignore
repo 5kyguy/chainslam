@@ -8,6 +8,7 @@
 # Agents
 agents/.*venv/
 agents/*.egg-info/
+__pycache__/
 
 # Backend
 backend/dist/

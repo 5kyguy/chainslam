@@ -14,6 +14,7 @@
     "@fastify/cors": "^10.0.1",
     "@fastify/websocket": "^11.2.0",
     "blessed": "^0.1.81",
+    "dotenv": "^16.6.1",
     "fastify": "^5.2.1",
     "pg": "^8.20.0",
     "viem": "^2.48.4"

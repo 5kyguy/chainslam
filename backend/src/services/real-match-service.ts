@@ -38,6 +38,11 @@ const TICK_MS = 10_000;
 const FALLBACK_INITIAL_PRICE = 3400;
 const AGENT_CONNECT_WAIT_MS = 3_000;
 
+/** If rounded PnL % difference is smaller than this, tie-break using final portfolio USD */
+const OUTCOME_RELATIVE_PNL_TOLERANCE_PCT = 0.25;
+/** Portfolio values considered identical for a draw after PnL tie (half-cent vs 2dp rounding) */
+const OUTCOME_PORTFOLIO_USD_EPS = 0.005;
+
 export class RealMatchService implements MatchService {
   private readonly runtimes = new Map<string, { a: ContenderRuntime; b: ContenderRuntime }>();
   private readonly priceHistories = new Map<string, number[]>();
@@ -567,15 +572,25 @@ export class RealMatchService implements MatchService {
   private updateStatsAndLeaderboard(match: MatchState, pair: { a: ContenderRuntime; b: ContenderRuntime }): void {
     const pnlA = match.contenders.A.pnlPct;
     const pnlB = match.contenders.B.pnlPct;
-    const drawThreshold = 0.25;
+    const portfolioA = match.contenders.A.portfolioUsd;
+    const portfolioB = match.contenders.B.portfolioUsd;
 
     let resultA: "win" | "loss" | "draw";
     let resultB: "win" | "loss" | "draw";
 
-    if (Math.abs(pnlA - pnlB) < drawThreshold) {
+    const pnlGap = Math.abs(pnlA - pnlB);
+    if (pnlGap >= OUTCOME_RELATIVE_PNL_TOLERANCE_PCT) {
+      if (pnlA > pnlB) {
+        resultA = "win";
+        resultB = "loss";
+      } else {
+        resultA = "loss";
+        resultB = "win";
+      }
+    } else if (Math.abs(portfolioA - portfolioB) <= OUTCOME_PORTFOLIO_USD_EPS) {
       resultA = "draw";
       resultB = "draw";
-    } else if (pnlA > pnlB) {
+    } else if (portfolioA > portfolioB) {
       resultA = "win";
       resultB = "loss";
     } else {

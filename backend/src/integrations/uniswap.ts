@@ -135,6 +135,21 @@ export function extractAmountsFromQuoteResponse(data: UniswapQuoteResponse): { a
     };
   }
 
+  /** Trading API variant: `quote.input` / `quote.output` with `amount` (base units) per token */
+  if ("input" in quote && "output" in quote) {
+    const inp = (quote as { input?: unknown }).input;
+    const out = (quote as { output?: unknown }).output;
+    if (inp && out && typeof inp === "object" && typeof out === "object") {
+      const inRec = inp as Record<string, unknown>;
+      const outRec = out as Record<string, unknown>;
+      const ai = inRec.amount;
+      const ao = outRec.amount;
+      if (typeof ai === "string" && typeof ao === "string" && ai.length > 0 && ao.length > 0) {
+        return { amountIn: ai, amountOut: ao };
+      }
+    }
+  }
+
   if ("orderInfo" in quote) {
     const orderInfo = (quote as { orderInfo?: UniswapXOrderInfo }).orderInfo;
     if (orderInfo?.input?.startAmount && orderInfo?.outputs?.[0]) {

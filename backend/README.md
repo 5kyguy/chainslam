@@ -32,7 +32,7 @@ Server default: `http://localhost:8787`
 
 ## Environment
 
-Copy `.env.example` to `.env` and adjust:
+Copy `.env.example` to **`backend/.env`** and adjust. On startup, the server loads that file into `process.env` (via `dotenv`), so variables like **`AGENTS_PYTHON_PATH`** apply even when you do not use `direnv` or shell exports.
 
 ### General
 
@@ -48,7 +48,7 @@ Copy `.env.example` to `.env` and adjust:
 | Variable | Default | Description |
 | --- | --- | --- |
 | `AGENTS_PYTHON_PATH` | `python3` | Path to Python binary (or venv, e.g. `.venv/bin/python`) |
-| `AGENTS_PACKAGE_DIR` | (empty) | Absolute path to the `agents/` directory containing `chain_slam_agents/` |
+| `AGENTS_PACKAGE_DIR` | (auto) | Absolute path to the `agents/` directory. If unset, the backend resolves the repo’s `agents/` folder from its own path (so `python3 -m chain_slam_agents` works without `pip install -e`). Override if you run from a copied tree. |
 
 ### LLM (reserved, not currently used by Python agents)
 

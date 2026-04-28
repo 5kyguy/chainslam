@@ -1,3 +1,15 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+/**
+ * Absolute path to the repo `agents/` directory (contains `chain_slam_agents/`).
+ * Resolved from `backend/src` or `backend/dist` so local runs work without setting `AGENTS_PACKAGE_DIR`.
+ */
+export function resolveDefaultAgentsPackageDir(): string {
+  const configDir = path.dirname(fileURLToPath(import.meta.url));
+  return path.resolve(configDir, "../../agents");
+}
+
 export interface AppConfig {
   port: number;
   host: string;
@@ -97,7 +109,7 @@ export function getConfig(): AppConfig {
     },
     agents: {
       pythonPath: process.env.AGENTS_PYTHON_PATH ?? "python3",
-      packageDir: process.env.AGENTS_PACKAGE_DIR ?? "",
+      packageDir: process.env.AGENTS_PACKAGE_DIR ?? resolveDefaultAgentsPackageDir(),
     },
     keeperhub: {
       apiKey: process.env.KEEPERHUB_API_KEY ?? "",
