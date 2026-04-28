@@ -253,46 +253,23 @@ The smoke script verifies:
 
 The smoke test runs in `dummy` mode and does not require PostgreSQL or Python.
 
-## Match Simulation Script
+## Terminal UI (TUI)
 
-After starting the backend, run:
-
-```bash
-npm run simulate:match
-```
-
-What it does:
-
-1. Calls `POST /api/agents` twice to create two agents.
-2. Calls `POST /api/matches` to start a match.
-3. Subscribes to `WS /ws/matches/:id`.
-4. Pretty-prints websocket JSON events (`snapshot`, `decision`, `trade_executed`, `completed`/`stopped`).
-5. Prints final match results summary (status, winner, PnL, feed/trade counts).
-
-### Silent mode
-
-For service/integration testing where you do not want websocket output:
+Watch a live match in the terminal:
 
 ```bash
-npm run simulate:match -- --silent
+npm run tui
 ```
 
-`--silent` behavior:
-
-- still logs API call responses for both agent creation calls and match creation
-- does not subscribe to websocket events
-- exits immediately after API setup calls
-
-### Optional flags
+Customize strategies and parameters:
 
 ```bash
-npm run simulate:match -- --base-url=http://127.0.0.1:8787 --duration=45 --token-pair=WETH/USDC --starting-capital=1000
+npm run tui -- --strategy-a=momentum --strategy-b=fear_greed --duration=60 --capital=500 --pair=WETH/USDC
 ```
 
-- `--base-url` (default: `http://127.0.0.1:8787`)
-- `--duration` seconds (minimum: `30`)
-- `--token-pair` (default: `WETH/USDC`)
-- `--starting-capital` USD (minimum: `10`)
+Flags: `--base-url`, `--strategy-a`, `--strategy-b`, `--duration`, `--capital`, `--pair`
+
+Controls: `q` to quit, `↑/↓` to scroll feed.
 
 ## Adding New Endpoints (Documentation Rules)
 
