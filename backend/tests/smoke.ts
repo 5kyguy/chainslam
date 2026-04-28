@@ -117,6 +117,20 @@ async function run() {
 
   await sleep(500);
 
+  const memoryJson = await fetch(`${httpBase}/api/matches/${created.id}/memory`).then((r) => r.json());
+  if (!Array.isArray(memoryJson?.events) || memoryJson.events.length < 1) {
+    throw new Error("Memory API returned no events (expected match_started; set ZEROG_ENABLED=false to disable memory)");
+  }
+  const startEv = memoryJson.events[0];
+  if (startEv?.kind !== "match_started" || startEv?.schemaVersion !== 1) {
+    throw new Error("Memory timeline missing versioned match_started event");
+  }
+
+  const zgProbe = await fetch(`${httpBase}/api/matches/${created.id}/memory/zg`).then((r) => r.json());
+  if (typeof zgProbe?.configured !== "boolean") {
+    throw new Error("Memory /zg response missing configured flag");
+  }
+
   const match = await fetch(`${httpBase}/api/matches/${created.id}`).then((r) => r.json());
   const feed = await fetch(`${httpBase}/api/matches/${created.id}/feed`).then((r) => r.json());
   const trades = await fetch(`${httpBase}/api/matches/${created.id}/trades`).then((r) => r.json());

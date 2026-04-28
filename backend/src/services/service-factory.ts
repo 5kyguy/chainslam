@@ -7,6 +7,8 @@ import { RealMatchService } from "./real-match-service.js";
 import { UniswapClient } from "../integrations/uniswap.js";
 import { KeeperHubClient } from "../integrations/keeperhub.js";
 import { KeeperHubExecutionPoller } from "./keeperhub-execution-poller.js";
+import { ZeroGKvClient } from "../integrations/zerog.js";
+import { ZeroGMemoryService } from "./zerog-memory-service.js";
 
 export interface MatchServiceBundle {
   matchService: MatchService;
@@ -45,6 +47,17 @@ export function buildMatchServiceBundle(
   const keeperHubPoller =
     keeperHub !== undefined ? new KeeperHubExecutionPoller(store, keeperHub, khCfg) : undefined;
 
+  let zeroGMemory: ZeroGMemoryService | undefined;
+  if (config.zerog.enabled) {
+    const zkv = new ZeroGKvClient(config.zerog);
+    zeroGMemory = new ZeroGMemoryService(config, zkv.isConfigured() ? zkv : undefined);
+    if (config.zerog.enabled && !zkv.isConfigured()) {
+      console.warn(
+        "[ZeroG] ZEROG_ENABLED is true but KV credentials are incomplete — memory stays in-process only (no 0G writes).",
+      );
+    }
+  }
+
   const matchService = new RealMatchService(
     config,
     agentService,
@@ -53,6 +66,7 @@ export function buildMatchServiceBundle(
     uniswap,
     keeperHub,
     keeperHubPoller,
+    zeroGMemory,
   );
 
   return { matchService, keeperHubPoller };

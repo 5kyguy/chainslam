@@ -21,3 +21,14 @@ export const paramsWithIdSchema = {
     }
   }
 } as const;
+
+/** Query params for `/api/matches/:id/memory` and `/api/agents/:id/memory` */
+export const memoryListQuerySchema = {
+  querystring: {
+    type: "object",
+    properties: {
+      limit: { type: "integer", minimum: 1, maximum: 500, default: 100 },
+      cursor: { type: "integer", minimum: 0, default: 0 },
+    },
+  },
+} as const;

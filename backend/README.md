@@ -93,6 +93,37 @@ When **`KEEPERHUB_API_KEY`** is set and **`UNISWAP_SWAP_MODE=live`**, each trade
 
 If submission fails (decode error, HTTP error, wallet not configured on KeeperHub, etc.), the trade row still exists and **`lastExecutionError`** is set so the arena keeps running.
 
+### 0G Storage — agent/match memory (Phase 7C, optional)
+
+Parallel **memory timeline** for demos/bounties: decisions, trades, and match summaries are recorded by default (set **`ZEROG_ENABLED=false`** to disable). PostgreSQL remains the authoritative store for matches, trades, and leaderboard.
+
+- **In-process timeline** is always populated when ZeroG memory is enabled (even without chain credentials).
+- **KV writes** (`@0gfoundation/0g-ts-sdk`): when `ZEROG_EVM_RPC`, indexer/KV RPCs, `ZEROG_PRIVATE_KEY`, and **`ZEROG_KV_STREAM_ID`** are set, snapshots are flushed to 0G Storage debounced batch + on match completion/stop. Logs include **`txHash`** from successful puts for recordings/demos.
+- Some public KV endpoints can lag significantly behind chain head; use `ZEROG_WRITE_COOLDOWN_MS` to avoid log spam/retry storms while nodes catch up.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `ZEROG_ENABLED` | `true` | Set `false` to disable the in-process memory timeline and 0G hooks. |
+| `ZEROG_EVM_RPC` | (empty) | EVM JSON-RPC URL for signer + flow contracts. |
+| `ZEROG_INDEXER_RPC` | (empty) | 0G indexer base URL for node selection / batcher. |
+| `ZEROG_KV_RPC` | (empty) | KV service RPC for reads (`getValue`). |
+| `ZEROG_PRIVATE_KEY` | (empty) | Hex private key with gas for KV writes. |
+| `ZEROG_KV_STREAM_ID` | (empty) | KV stream id (`0x…`) for key namespace. |
+| `ZEROG_KEY_PREFIX` | `agentslam/v1` | Prefix for keys: `{prefix}/match/{matchId}`, `{prefix}/agent/{agentId}`. |
+| `ZEROG_MAX_RETRIES` | `3` | Retries on transient SDK/network errors. |
+| `ZEROG_FLUSH_DEBOUNCE_MS` | `1200` | Ms to wait after activity before flushing a match snapshot to KV. |
+| `ZEROG_WRITE_COOLDOWN_MS` | `300000` | Pause KV writes after a failed flush to avoid tight loops while the storage node is syncing. |
+
+**Demo checklist**
+
+1. Ensure memory is on (default) and set full `ZEROG_*` credentials from 0G testnet docs.
+2. Start backend, run a short match; watch logs for `[ZeroGMemory] flushed match snapshot` and `txHash`.
+3. `GET /api/matches/:id/memory` — paginated `events` with `schemaVersion`, `kind`, `payload`.
+4. `GET /api/matches/:id/memory/zg` — optional raw JSON snapshot read from KV (`configured`, `raw`).
+5. `GET /api/agents/:id/memory` — agent-scoped slice (includes events tagged with `agentId`).
+
+See **`docs/PHASE_7C_0G_MEMORY.md`** for architecture notes and tradeoffs.
+
 ## How Match Execution Works
 
 The match service always spawns Python agent processes:
@@ -150,6 +181,9 @@ The schema is created automatically on first startup via `PostgresStore.init()`.
 | `GET /api/matches/:id` | Return current match snapshot (status, PnL, time remaining, contenders) | Poll or refresh current match state view |
 | `GET /api/matches/:id/trades` | Return executed trade history for the match | Populate trade history panel/table |
 | `GET /api/matches/:id/feed` | Return decision feed events (buy/sell/hold reasoning) | Populate live decision feed list |
+| `GET /api/matches/:id/memory` | Paginated Phase 7C memory timeline (`limit`, `cursor`) — empty `events` if `ZEROG_ENABLED=false` | Replay / audit UI |
+| `GET /api/matches/:id/memory/zg` | Raw snapshot string from 0G KV when configured (`configured`, `raw`) | Proof / bounty evidence |
+| `GET /api/agents/:id/memory` | Paginated memory events for one agent (`limit`, `cursor`) | Agent-centric history |
 | `POST /api/matches/:id/stop` | Stop an active match before natural completion | Called from "Stop Match" control |
 | `GET /api/strategies` | List available strategy options | Build pre-match strategy selectors/dropdowns |
 | `GET /api/leaderboard` | Return historical/derived ranking summary | Populate leaderboard page/widget |
@@ -214,6 +248,43 @@ Trade event payload:
 
 Optional fields are omitted when using legacy price-based paper fills (`executionMode`: `paper`).
 
+**Match memory** (`GET /api/matches/:id/memory`) when the memory feature is enabled (default):
+
+```json
+{
+  "events": [
+    {
+      "schemaVersion": 1,
+      "kind": "match_started",
+      "ts": "2026-04-28T12:00:00.000Z",
+      "matchId": "…",
+      "payload": {
+        "matchId": "…",
+        "tokenPair": "WETH/USDC",
+        "startingCapitalUsd": 1000,
+        "durationSeconds": 60,
+        "contenderA": { "agentId": "…", "name": "…", "strategy": "momentum" },
+        "contenderB": { "agentId": "…", "name": "…", "strategy": "dca" }
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "kind": "decision",
+      "ts": "2026-04-28T12:00:10.000Z",
+      "matchId": "…",
+      "agentId": "…",
+      "contenderName": "Momentum Trader",
+      "payload": { "tickNumber": 1, "action": "hold", "amount": 0, "reasoning": "…", "confidence": 0.5 }
+    }
+  ],
+  "nextCursor": null,
+  "source": "memory",
+  "lastTxHash": "0x…"
+}
+```
+
+`lastTxHash` is set after a successful KV flush when chain credentials are configured.
+
 ### Agent WebSocket Protocol
 
 The `/ws/agent/:agentId` endpoint uses a request-response protocol:
@@ -261,6 +332,12 @@ If the agent does not respond within 8 seconds, the backend defaults to `hold`.
 
 ## Validation / QA
 
+Unit tests (outcome helpers + ZeroG memory pagination/mapping):
+
+```bash
+npm run test:unit
+```
+
 Run the smoke test:
 
 ```bash
@@ -272,10 +349,17 @@ The smoke script verifies:
 1. Match creation
 2. WS snapshot reception
 3. Feed and trade retrieval
-4. Stop endpoint
-5. Leaderboard retrieval
+4. Memory API returns a `match_started` event (memory on by default unless disabled)
+5. Stop endpoint
+6. Leaderboard retrieval
 
 The smoke test uses in-memory store + stubbed agent process manager, so it does not require PostgreSQL or Python.
+
+Run both:
+
+```bash
+npm test
+```
 
 ## Terminal UI (TUI)
 

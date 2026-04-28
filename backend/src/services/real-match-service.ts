@@ -23,6 +23,8 @@ import type {
   TradeEvent,
   WsEnvelope,
 } from "../types.js";
+import { computeMatchOutcome } from "./match-outcome.js";
+import type { MemoryPage, MemoryQuery, ZeroGMemoryService } from "./zerog-memory-service.js";
 
 interface ContenderRuntime {
   agentId: string;
@@ -38,11 +40,6 @@ const TICK_MS = 10_000;
 const FALLBACK_INITIAL_PRICE = 3400;
 const AGENT_CONNECT_WAIT_MS = 3_000;
 
-/** If rounded PnL % difference is smaller than this, tie-break using final portfolio USD */
-const OUTCOME_RELATIVE_PNL_TOLERANCE_PCT = 0.25;
-/** Portfolio values considered identical for a draw after PnL tie (half-cent vs 2dp rounding) */
-const OUTCOME_PORTFOLIO_USD_EPS = 0.005;
-
 export class RealMatchService implements MatchService {
   private readonly runtimes = new Map<string, { a: ContenderRuntime; b: ContenderRuntime }>();
   private readonly priceHistories = new Map<string, number[]>();
@@ -56,6 +53,7 @@ export class RealMatchService implements MatchService {
     private readonly uniswap: UniswapClient,
     private readonly keeperHub?: KeeperHubClient,
     private readonly keeperHubPoller?: KeeperHubExecutionPoller,
+    private readonly zeroGMemory?: ZeroGMemoryService,
   ) {}
 
   createMatch(input: MatchCreateRequest): MatchState {
@@ -112,6 +110,16 @@ export class RealMatchService implements MatchService {
     this.publishEnvelope(id, "snapshot", match);
 
     setTimeout(() => this.startLoop(id), AGENT_CONNECT_WAIT_MS);
+
+    this.zeroGMemory?.recordMatchStarted({
+      matchId: id,
+      tokenPair: input.tokenPair,
+      startingCapitalUsd: capital,
+      durationSeconds: duration,
+      contenderA: { agentId: agentA.id, name: agentA.name, strategy: agentA.strategy },
+      contenderB: { agentId: agentB.id, name: agentB.name, strategy: agentB.strategy },
+    });
+
     return match;
   }
 
@@ -135,6 +143,19 @@ export class RealMatchService implements MatchService {
     match.status = "stopped";
     match.timeRemainingSeconds = Math.max(0, Math.floor((new Date(match.endsAt).getTime() - Date.now()) / 1000));
     this.store.updateMatch(match);
+    const pair = this.runtimes.get(id);
+    if (pair) {
+      const oc = computeMatchOutcome(match);
+      this.zeroGMemory?.recordMatchStopped({
+        matchId: id,
+        status: "stopped",
+        contenders: {
+          A: { agentId: pair.a.agentId, name: pair.a.name, pnlPct: match.contenders.A.pnlPct, portfolioUsd: match.contenders.A.portfolioUsd },
+          B: { agentId: pair.b.agentId, name: pair.b.name, pnlPct: match.contenders.B.pnlPct, portfolioUsd: match.contenders.B.portfolioUsd },
+        },
+        outcome: oc,
+      });
+    }
     this.killAgents(id);
     this.publishEnvelope(id, "stopped", match);
     return match;
@@ -146,6 +167,32 @@ export class RealMatchService implements MatchService {
 
   getLeaderboard() {
     return this.store.getLeaderboard();
+  }
+
+  getMatchMemory(matchId: string, query?: MemoryQuery): MemoryPage {
+    if (!this.zeroGMemory) {
+      return { events: [], nextCursor: null, source: "memory" };
+    }
+    return this.zeroGMemory.getMatchMemoryPage(matchId, query);
+  }
+
+  getAgentMemory(agentId: string, query?: MemoryQuery): MemoryPage {
+    if (!this.zeroGMemory) {
+      return { events: [], nextCursor: null, source: "memory" };
+    }
+    return this.zeroGMemory.getAgentMemoryPage(agentId, query);
+  }
+
+  async getMatchMemoryFromZg(matchId: string): Promise<{ raw: string | null; configured: boolean }> {
+    if (!this.zeroGMemory) {
+      return { raw: null, configured: false };
+    }
+    const configured = this.zeroGMemory.isEnabled();
+    if (!configured) {
+      return { raw: null, configured: false };
+    }
+    const { raw } = await this.zeroGMemory.fetchMatchSnapshotFromZg(matchId);
+    return { raw, configured: true };
   }
 
   onWsConnect(matchId: string, send: (payload: unknown) => void): () => void {
@@ -211,6 +258,17 @@ export class RealMatchService implements MatchService {
       this.store.updateMatch(match);
       this.killAgents(matchId);
       this.publishEnvelope(matchId, "completed", match);
+      const oc = computeMatchOutcome(match);
+      this.zeroGMemory?.recordMatchCompleted({
+        matchId,
+        tokenPair: match.tokenPair,
+        startingCapitalUsd: match.startingCapitalUsd,
+        contenders: {
+          A: { agentId: pair.a.agentId, name: pair.a.name, pnlPct: match.contenders.A.pnlPct, portfolioUsd: match.contenders.A.portfolioUsd, trades: match.contenders.A.trades },
+          B: { agentId: pair.b.agentId, name: pair.b.name, pnlPct: match.contenders.B.pnlPct, portfolioUsd: match.contenders.B.portfolioUsd, trades: match.contenders.B.trades },
+        },
+        outcome: oc,
+      });
       this.updateStatsAndLeaderboard(match, pair);
     }
   }
@@ -259,6 +317,13 @@ export class RealMatchService implements MatchService {
 
     this.store.addDecision(matchId, decision);
     this.publishEnvelope(matchId, "decision", decision);
+    this.zeroGMemory?.recordDecision({
+      matchId,
+      agentId: contender.agentId,
+      contenderName: contender.name,
+      tickNumber,
+      decision,
+    });
     return signal;
   }
 
@@ -395,6 +460,12 @@ export class RealMatchService implements MatchService {
 
         this.store.addTrade(matchId, trade);
         this.publishEnvelope(matchId, "trade_executed", trade);
+        this.zeroGMemory?.recordTrade({
+          matchId,
+          agentId: contender.agentId,
+          contenderName: contender.name,
+          trade,
+        });
         this.enqueueKeeperHubSubmission(matchId, trade);
         return true;
       }
@@ -460,6 +531,12 @@ export class RealMatchService implements MatchService {
 
         this.store.addTrade(matchId, trade);
         this.publishEnvelope(matchId, "trade_executed", trade);
+        this.zeroGMemory?.recordTrade({
+          matchId,
+          agentId: contender.agentId,
+          contenderName: contender.name,
+          trade,
+        });
         this.enqueueKeeperHubSubmission(matchId, trade);
         return true;
       }
@@ -505,6 +582,12 @@ export class RealMatchService implements MatchService {
 
       this.store.addTrade(matchId, trade);
       this.publishEnvelope(matchId, "trade_executed", trade);
+      this.zeroGMemory?.recordTrade({
+        matchId,
+        agentId: contender.agentId,
+        contenderName: contender.name,
+        trade,
+      });
     }
 
     if (signal.action === "sell") {
@@ -534,6 +617,12 @@ export class RealMatchService implements MatchService {
 
       this.store.addTrade(matchId, trade);
       this.publishEnvelope(matchId, "trade_executed", trade);
+      this.zeroGMemory?.recordTrade({
+        matchId,
+        agentId: contender.agentId,
+        contenderName: contender.name,
+        trade,
+      });
     }
   }
 
@@ -570,33 +659,9 @@ export class RealMatchService implements MatchService {
   }
 
   private updateStatsAndLeaderboard(match: MatchState, pair: { a: ContenderRuntime; b: ContenderRuntime }): void {
+    const { resultA, resultB } = computeMatchOutcome(match);
     const pnlA = match.contenders.A.pnlPct;
     const pnlB = match.contenders.B.pnlPct;
-    const portfolioA = match.contenders.A.portfolioUsd;
-    const portfolioB = match.contenders.B.portfolioUsd;
-
-    let resultA: "win" | "loss" | "draw";
-    let resultB: "win" | "loss" | "draw";
-
-    const pnlGap = Math.abs(pnlA - pnlB);
-    if (pnlGap >= OUTCOME_RELATIVE_PNL_TOLERANCE_PCT) {
-      if (pnlA > pnlB) {
-        resultA = "win";
-        resultB = "loss";
-      } else {
-        resultA = "loss";
-        resultB = "win";
-      }
-    } else if (Math.abs(portfolioA - portfolioB) <= OUTCOME_PORTFOLIO_USD_EPS) {
-      resultA = "draw";
-      resultB = "draw";
-    } else if (portfolioA > portfolioB) {
-      resultA = "win";
-      resultB = "loss";
-    } else {
-      resultA = "loss";
-      resultB = "win";
-    }
 
     this.agentService.updateStats(pair.a.agentId, resultA, pnlA);
     this.agentService.updateStats(pair.b.agentId, resultB, pnlB);

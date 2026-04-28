@@ -52,6 +52,24 @@ export interface AppConfig {
     /** Max status polls per execution before giving up. */
     maxPollAttempts: number;
   };
+  /** 0G Storage — optional agent/match memory (KV) mirror for Phase 7C. */
+  zerog: {
+    enabled: boolean;
+    evmRpc: string;
+    indexerRpc: string;
+    kvRpc: string;
+    /** Wallet private key with gas on 0G chain for KV writes (never commit real funds). */
+    privateKey: string;
+    /** KV stream id (hex `0x…`) where keys are written. */
+    streamId: string;
+    /** Prefix for KV keys, e.g. `agentslam/v1`. */
+    keyPrefix: string;
+    maxRetries: number;
+    /** Debounce window before flushing accumulated events to 0G (ms). */
+    flushDebounceMs: number;
+    /** Cooldown after a failed KV flush/write attempt (ms). Prevents tight retry loops while nodes are still syncing. */
+    writeCooldownMs: number;
+  };
 }
 
 function envNumber(name: string, fallback: number): number {
@@ -118,6 +136,18 @@ export function getConfig(): AppConfig {
       maxRetries: envNumber("KEEPERHUB_MAX_RETRIES", 3),
       pollIntervalMs: envNumber("KEEPERHUB_POLL_INTERVAL_MS", 5000),
       maxPollAttempts: envNumber("KEEPERHUB_MAX_POLL_ATTEMPTS", 120),
+    },
+    zerog: {
+      enabled: envBool("ZEROG_ENABLED", true),
+      evmRpc: process.env.ZEROG_EVM_RPC ?? "",
+      indexerRpc: process.env.ZEROG_INDEXER_RPC ?? "",
+      kvRpc: process.env.ZEROG_KV_RPC ?? "",
+      privateKey: process.env.ZEROG_PRIVATE_KEY ?? "",
+      streamId: process.env.ZEROG_KV_STREAM_ID ?? "",
+      keyPrefix: process.env.ZEROG_KEY_PREFIX ?? "agentslam/v1",
+      maxRetries: envNumber("ZEROG_MAX_RETRIES", 3),
+      flushDebounceMs: envNumber("ZEROG_FLUSH_DEBOUNCE_MS", 1200),
+      writeCooldownMs: envNumber("ZEROG_WRITE_COOLDOWN_MS", 300000),
     },
   };
 }
