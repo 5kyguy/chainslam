@@ -68,15 +68,23 @@ Copy `.env.example` to `.env` and adjust:
 | `LLM_MODEL` | `gpt-4o-mini` | Model identifier |
 | `LLM_BASE_URL` | `https://api.openai.com/v1` | API base URL |
 
-### Uniswap (optional price feed)
+### Uniswap (Trading API — quotes, optional execution-sized fills)
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `UNISWAP_ENABLED` | `false` | Enable real Uniswap price quotes |
-| `UNISWAP_API_KEY` | (empty) | Uniswap Trading API key |
-| `UNISWAP_CHAIN_ID` | `1` | Chain ID for price queries |
+| `UNISWAP_ENABLED` | `false` | Enable Uniswap Trading API client (requires `UNISWAP_API_KEY`) |
+| `UNISWAP_API_KEY` | (empty) | API key from [Uniswap developer dashboard](https://developers.uniswap.org/dashboard) |
+| `UNISWAP_BASE_URL` | `https://trade-api.gateway.uniswap.org/v1` | Trading API base URL |
+| `UNISWAP_CHAIN_ID` | `1` | Chain ID for quotes and approval checks |
+| `UNISWAP_SWAPPER_ADDRESS` | Vitalik placeholder | Wallet address used as `swapper` in `/quote` and `walletAddress` in `/check_approval` (no funds needed for quote-only use) |
 | `UNISWAP_TIMEOUT_MS` | `15000` | Request timeout |
 | `UNISWAP_MAX_RETRIES` | `2` | Max retry count on failure |
+| `UNISWAP_EXECUTION` | `false` | When `true` and real mode has a Uniswap client, match **trades** use real `POST /quote` amounts + `POST /check_approval`; balances stay **paper**. Falls back to price-based math if the API errors. |
+| `UNISWAP_SWAP_MODE` | `mock` | `mock` = never call `POST /swap` (unsigned tx / calldata are not requested). Use `live` later when you wire signing + broadcast; until then the backend still skips `POST /swap` and logs a one-time warning. |
+
+**Endpoints used:** `POST /quote` (price ticks and trade sizing), `POST /check_approval`. **`POST /swap` is not called** in `mock` mode so you can demo real routing without spending gas.
+
+**Supported pair symbols** (mainnet addresses in code): `WETH`, `USDC`, `USDT`, `DAI`, `WBTC`, `UNI`, `LINK`, plus raw `0x…` addresses.
 
 ## How Real Mode Works
 
@@ -89,7 +97,9 @@ In `BACKEND_MODE=real`, the match service spawns Python agent processes:
 5. The backend applies trades, tracks portfolios, and streams updates to the UI.
 6. When the match ends, the backend sends `match_end` to both agents and kills the processes.
 
-All trading is paper-based. The backend owns all portfolio state and trade execution — agents only evaluate and decide.
+Portfolio balances are always **paper** (no on-chain swap broadcast). With `UNISWAP_EXECUTION=true`, fill sizes follow **live Uniswap quotes** and **approval checks**; with `UNISWAP_EXECUTION=false`, fills use the spot price from the tick (`ethPrice`) like before. The backend owns portfolio state — agents only evaluate and decide.
+
+**Demo (real quotes, no capital):** `BACKEND_MODE=real`, `UNISWAP_ENABLED=true`, `UNISWAP_API_KEY=…`, `UNISWAP_EXECUTION=true`, `UNISWAP_SWAP_MODE=mock`.
 
 ### Python Agent Strategies
 
@@ -159,7 +169,7 @@ Notes:
 
 - `snapshot` payload is the full current match state.
 - `decision` payload represents contender intent and reasoning.
-- `trade_executed` payload represents simulated execution result.
+- `trade_executed` payload represents simulated execution result. When Uniswap-sized fills are used, optional fields include `executionMode` (`uniswap_quote_mock` vs `paper`), `quoteRouting`, `mockSwapBuild`, `approvalRequestId`.
 - `completed` and `stopped` are terminal lifecycle events.
 
 Decision event payload:
@@ -186,9 +196,15 @@ Trade event payload:
   "sold": { "token": "USDC", "amount": 150 },
   "bought": { "token": "WETH", "amount": 0.044 },
   "gasUsd": 1.23,
-  "timestamp": "2026-04-27T07:00:00.000Z"
+  "timestamp": "2026-04-27T07:00:00.000Z",
+  "executionMode": "uniswap_quote_mock",
+  "quoteRouting": "CLASSIC",
+  "mockSwapBuild": { "mode": "mock", "chainId": 1, "note": "POST /swap was not executed." },
+  "approvalRequestId": "req_…"
 }
 ```
+
+Optional fields are omitted when using legacy price-based paper fills (`executionMode`: `paper`).
 
 ### Agent WebSocket Protocol
 

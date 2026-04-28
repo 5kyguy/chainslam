@@ -6,6 +6,7 @@ export const KNOWN_TOKENS: Record<string, string> = {
   DAI: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
   WBTC: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
   UNI: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984",
+  LINK: "0x514910771AF9Ca656af840dff83E8264EcF986CA",
 };
 
 export const TOKEN_DECIMALS: Record<string, number> = {
@@ -16,6 +17,7 @@ export const TOKEN_DECIMALS: Record<string, number> = {
   DAI: 18,
   WBTC: 8,
   UNI: 18,
+  LINK: 18,
 };
 
 export function resolveToken(symbolOrAddress: string): string {

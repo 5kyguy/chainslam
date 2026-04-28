@@ -4,7 +4,7 @@ import WebSocket from "ws";
 const BASE_URL = process.argv.find((a) => a.startsWith("--base-url="))?.split("=")[1] ?? "http://127.0.0.1:8787";
 const STRATEGY_A = process.argv.find((a) => a.startsWith("--strategy-a="))?.split("=")[1] ?? "momentum";
 const STRATEGY_B = process.argv.find((a) => a.startsWith("--strategy-b="))?.split("=")[1] ?? "mean_reverter";
-const DURATION = parseInt(process.argv.find((a) => a.startsWith("--duration="))?.split("=")[1] ?? "300", 10);
+const DURATION = parseInt(process.argv.find((a) => a.startsWith("--duration="))?.split("=")[1] ?? "30", 10);
 const CAPITAL = parseInt(process.argv.find((a) => a.startsWith("--capital="))?.split("=")[1] ?? "1000", 10);
 const TOKEN_PAIR = process.argv.find((a) => a.startsWith("--pair="))?.split("=")[1] ?? "WETH/USDC";
 
@@ -18,6 +18,7 @@ const STRATEGY_NAMES: Record<string, string> = {
 };
 
 const wsUrl = BASE_URL.replace(/^http/, "ws");
+const STRATEGY_KEYS = Object.keys(STRATEGY_NAMES);
 
 async function api<T = unknown>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, init);
@@ -57,15 +58,125 @@ function formatTime(seconds: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-async function main() {
-  const nameA = STRATEGY_NAMES[STRATEGY_A] ?? STRATEGY_A;
-  const nameB = STRATEGY_NAMES[STRATEGY_B] ?? STRATEGY_B;
+async function selectStrategies(screen: blessed.Widgets.Screen): Promise<{ strategyA: string; strategyB: string }> {
+  const defaultA = Math.max(0, STRATEGY_KEYS.indexOf(STRATEGY_A));
+  const defaultB = Math.max(0, STRATEGY_KEYS.indexOf(STRATEGY_B));
+  const strategyLabel = (key: string) => `${STRATEGY_NAMES[key] ?? key} (${key})`;
 
+  return new Promise((resolve) => {
+    const overlay = blessed.box({
+      top: "center",
+      left: "center",
+      width: "80%",
+      height: 17,
+      tags: true,
+      label: " SELECT AGENTS ",
+      border: { type: "line" },
+      style: { border: { fg: "cyan" }, bg: "black" },
+    });
+
+    const title = blessed.box({
+      parent: overlay,
+      top: 0,
+      left: 1,
+      width: "100%-2",
+      height: 2,
+      tags: true,
+      content: "{bold}Choose two agents, then press Enter to start{/bold}",
+    });
+
+    const listA = blessed.list({
+      parent: overlay,
+      top: 2,
+      left: 1,
+      width: "50%-2",
+      height: 11,
+      border: { type: "line" },
+      label: " AGENT A ",
+      keys: true,
+      vi: true,
+      mouse: true,
+      style: {
+        selected: { bg: "yellow", fg: "black" },
+        item: { fg: "white" },
+      },
+      items: STRATEGY_KEYS.map(strategyLabel),
+    });
+
+    const listB = blessed.list({
+      parent: overlay,
+      top: 2,
+      left: "50%",
+      width: "50%-1",
+      height: 11,
+      border: { type: "line" },
+      label: " AGENT B ",
+      keys: true,
+      vi: true,
+      mouse: true,
+      style: {
+        selected: { bg: "magenta", fg: "black" },
+        item: { fg: "white" },
+      },
+      items: STRATEGY_KEYS.map(strategyLabel),
+    });
+
+    const footer = blessed.box({
+      parent: overlay,
+      bottom: 0,
+      left: 1,
+      width: "100%-2",
+      height: 2,
+      tags: true,
+      content: "{grey-fg}tab: switch list  ↑/↓: choose  enter: start match  q:quit{/grey-fg}",
+    });
+
+    listA.select(defaultA);
+    listB.select(defaultB);
+    listA.focus();
+    screen.append(overlay);
+    screen.render();
+
+    let activeList: "A" | "B" = "A";
+    const toggleFocus = () => {
+      activeList = activeList === "A" ? "B" : "A";
+      (activeList === "A" ? listA : listB).focus();
+      screen.render();
+    };
+
+    const confirm = () => {
+      const selectedA = STRATEGY_KEYS[(listA as unknown as { selected: number }).selected];
+      const selectedB = STRATEGY_KEYS[(listB as unknown as { selected: number }).selected];
+      cleanup();
+      resolve({ strategyA: selectedA, strategyB: selectedB });
+    };
+
+    const onTab = () => toggleFocus();
+    const onEnter = () => confirm();
+    const cleanup = () => {
+      screen.unkey("tab", onTab);
+      screen.unkey("enter", onEnter);
+      overlay.destroy();
+      screen.render();
+    };
+
+    screen.key("tab", onTab);
+    screen.key("enter", onEnter);
+  });
+}
+
+async function main() {
   const screen = blessed.screen({
     smartCSR: true,
     title: "Agent Slam Arena",
     fullUnicode: true,
   });
+
+  const selected = await selectStrategies(screen);
+  const strategyA = selected.strategyA;
+  const strategyB = selected.strategyB;
+  const nameA = STRATEGY_NAMES[strategyA] ?? strategyA;
+  const nameB = STRATEGY_NAMES[strategyB] ?? strategyB;
 
   const header = blessed.box({
     top: 0, left: 0, width: "100%", height: 3,
@@ -160,13 +271,13 @@ async function main() {
     const agentAResp = await api<{ id: string }>("/api/agents", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: nameA, strategy: STRATEGY_A }),
+      body: JSON.stringify({ name: nameA, strategy: strategyA }),
     });
 
     const agentBResp = await api<{ id: string }>("/api/agents", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: nameB, strategy: STRATEGY_B }),
+      body: JSON.stringify({ name: nameB, strategy: strategyB }),
     });
 
     log(`{green-fg}✓{/} Created agent A: ${nameA} (${agentAResp.id})`);

@@ -81,6 +81,17 @@ export interface TradeEvent {
   bought: { token: string; amount: number };
   gasUsd: number;
   timestamp: string;
+  /** Present when sizes came from Uniswap `/quote` (paper fill, no chain). */
+  executionMode?: "paper" | "uniswap_quote_mock";
+  quoteRouting?: string;
+  mockSwapBuild?: {
+    mode?: string;
+    chainId?: number;
+    routing?: string;
+    quoteSnippet?: { amountIn?: string; amountOut?: string };
+    note?: string;
+  };
+  approvalRequestId?: string;
 }
 
 export type FeedEvent = DecisionEvent | TradeEvent;

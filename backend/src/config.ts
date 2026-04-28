@@ -21,6 +21,10 @@ export interface AppConfig {
     swapperAddress: string;
     timeoutMs: number;
     maxRetries: number;
+    /** Use real `/quote` + `/check_approval` for trade sizing (paper settlement). */
+    execution: boolean;
+    /** `mock` = never call POST /swap; `live` reserved for real swap calldata later. */
+    swapMode: "mock" | "live";
   };
   agents: {
     pythonPath: string;
@@ -35,6 +39,21 @@ function envNumber(name: string, fallback: number): number {
   }
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function envBool(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const v = raw.toLowerCase();
+  if (v === "true" || v === "1" || v === "yes") return true;
+  if (v === "false" || v === "0" || v === "no") return false;
+  return fallback;
+}
+
+function parseSwapMode(raw: string | undefined): "mock" | "live" {
+  const v = (raw ?? "mock").toLowerCase();
+  if (v === "live") return "live";
+  return "mock";
 }
 
 export function getConfig(): AppConfig {
@@ -66,6 +85,8 @@ export function getConfig(): AppConfig {
       swapperAddress: process.env.UNISWAP_SWAPPER_ADDRESS ?? "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
       timeoutMs: envNumber("UNISWAP_TIMEOUT_MS", 15000),
       maxRetries: envNumber("UNISWAP_MAX_RETRIES", 2),
+      execution: envBool("UNISWAP_EXECUTION", false),
+      swapMode: parseSwapMode(process.env.UNISWAP_SWAP_MODE),
     },
     agents: {
       pythonPath: process.env.AGENTS_PYTHON_PATH ?? "python3",

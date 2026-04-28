@@ -6,6 +6,7 @@ import type { MatchService } from "./match-service.js";
 import type { Store } from "../store/store.js";
 import type { AgentProcessManager, ManagedAgent } from "../agents/process-manager.js";
 import type { UniswapClient } from "../integrations/uniswap.js";
+import { fromBaseUnits, tokenDecimals, toBaseUnits } from "../integrations/tokens.js";
 import type {
   ContenderState,
   DecisionEvent,
@@ -35,6 +36,7 @@ export class RealMatchService implements MatchService {
   private readonly runtimes = new Map<string, { a: ContenderRuntime; b: ContenderRuntime }>();
   private readonly priceHistories = new Map<string, number[]>();
   private readonly tickNumbers = new Map<string, number>();
+  private warnedLiveSwapMode = false;
 
   constructor(
     private readonly config: AppConfig,
@@ -179,8 +181,8 @@ export class RealMatchService implements MatchService {
       this.evaluateContender(matchId, match, pair.b, "B", currentPrice, priceHistory, tickNum, totalTicks),
     ]);
 
-    this.applyDecision(matchId, match, pair.a, match.contenders.A, sigA, currentPrice);
-    this.applyDecision(matchId, match, pair.b, match.contenders.B, sigB, currentPrice);
+    await this.applyDecision(matchId, match, pair.a, match.contenders.A, sigA, currentPrice);
+    await this.applyDecision(matchId, match, pair.b, match.contenders.B, sigB, currentPrice);
 
     const newPrice = await this.fetchPrice(currentPrice, match.tokenPair);
     priceHistory.push(newPrice);
@@ -248,21 +250,191 @@ export class RealMatchService implements MatchService {
     return signal;
   }
 
-  private applyDecision(
+  private async applyDecision(
     matchId: string,
     match: MatchState,
     contender: ContenderRuntime,
     state: ContenderState,
     signal: StrategySignal,
     currentPrice: number,
-  ): void {
+  ): Promise<void> {
     if (signal.action === "hold") return;
+
+    if (this.config.uniswap.swapMode === "live" && !this.warnedLiveSwapMode) {
+      console.warn(
+        "[RealMatchService] UNISWAP_SWAP_MODE=live: POST /swap is not wired yet; trades still use real quotes + mock swap metadata only (no on-chain swap).",
+      );
+      this.warnedLiveSwapMode = true;
+    }
 
     const [base, quote] = match.tokenPair.split("/");
     const baseToken = base ?? "WETH";
     const quoteToken = quote ?? "USDC";
     const maxTradeUsd = match.startingCapitalUsd * 0.5;
 
+    const handled = await this.tryApplyDecisionWithUniswapQuotes(
+      matchId,
+      contender,
+      state,
+      signal,
+      currentPrice,
+      baseToken,
+      quoteToken,
+      maxTradeUsd,
+    );
+    if (handled) return;
+
+    this.applyDecisionPaper(matchId, contender, state, signal, currentPrice, baseToken, quoteToken, maxTradeUsd);
+  }
+
+  /**
+   * Real `/quote` route sizes + `/check_approval`; mock swap metadata only (never POST /swap).
+   */
+  private async tryApplyDecisionWithUniswapQuotes(
+    matchId: string,
+    contender: ContenderRuntime,
+    state: ContenderState,
+    signal: StrategySignal,
+    currentPrice: number,
+    baseToken: string,
+    quoteToken: string,
+    maxTradeUsd: number,
+  ): Promise<boolean> {
+    if (!this.uniswap || !this.config.uniswap.execution) {
+      return false;
+    }
+
+    try {
+      if (signal.action === "buy") {
+        let amountUsd = Math.min(signal.amount, contender.usdcBalance, maxTradeUsd);
+        if (amountUsd < 10) return true;
+
+        const quoteDecimals = tokenDecimals(quoteToken);
+        const amountInBaseUnits = (BigInt(Math.round(amountUsd * 10 ** quoteDecimals))).toString();
+
+        const q = await this.uniswap.getExactInputQuote({
+          tokenInSymbol: quoteToken,
+          tokenOutSymbol: baseToken,
+          amountInBaseUnits,
+        });
+
+        let approvalRequestId: string | undefined;
+        try {
+          const appr = await this.uniswap.checkApproval({
+            tokenInSymbolOrAddress: quoteToken,
+            amountBaseUnits: amountInBaseUnits,
+          });
+          approvalRequestId = appr.requestId;
+        } catch (apErr) {
+          console.error("[Uniswap] check_approval failed (continuing with quote fill):", apErr);
+        }
+
+        const mockBuild = this.uniswap.buildMockSwapBuild(q.raw);
+
+        const debitQuote = fromBaseUnits(q.amountIn, quoteDecimals);
+        const creditBase = fromBaseUnits(q.amountOut, tokenDecimals(baseToken));
+
+        contender.usdcBalance -= debitQuote;
+        contender.ethBalance += creditBase;
+        contender.tradeCount += 1;
+        state.trades += 1;
+
+        const trade: TradeEvent = {
+          event: "trade_executed",
+          contender: contender.name,
+          txHash: `0x${randomUUID().replace(/-/g, "").slice(0, 32)}`,
+          sold: { token: quoteToken, amount: Number(debitQuote.toFixed(quoteDecimals <= 9 ? 6 : 8)) },
+          bought: { token: baseToken, amount: Number(creditBase.toFixed(tokenDecimals(baseToken) <= 9 ? 6 : 8)) },
+          gasUsd: Number((Math.random() * 1.5 + 0.8).toFixed(2)),
+          timestamp: new Date().toISOString(),
+          executionMode: "uniswap_quote_mock",
+          quoteRouting: q.routing,
+          mockSwapBuild: mockBuild,
+          approvalRequestId,
+        };
+
+        this.store.addTrade(matchId, trade);
+        this.publishEnvelope(matchId, "trade_executed", trade);
+        return true;
+      }
+
+      if (signal.action === "sell") {
+        let amountBase = Math.min(signal.amount, contender.ethBalance);
+        if (amountBase < 10 / currentPrice) return true;
+
+        let amountUsd = amountBase * currentPrice;
+        if (amountUsd > maxTradeUsd) {
+          amountBase = maxTradeUsd / currentPrice;
+          amountUsd = amountBase * currentPrice;
+        }
+
+        const baseDecimals = tokenDecimals(baseToken);
+        const amountInBaseUnits = toBaseUnits(amountBase, baseDecimals);
+
+        const q = await this.uniswap.getExactInputQuote({
+          tokenInSymbol: baseToken,
+          tokenOutSymbol: quoteToken,
+          amountInBaseUnits,
+        });
+
+        let approvalRequestId: string | undefined;
+        try {
+          const appr = await this.uniswap.checkApproval({
+            tokenInSymbolOrAddress: baseToken,
+            amountBaseUnits: amountInBaseUnits,
+          });
+          approvalRequestId = appr.requestId;
+        } catch (apErr) {
+          console.error("[Uniswap] check_approval failed (continuing with quote fill):", apErr);
+        }
+
+        const mockBuild = this.uniswap.buildMockSwapBuild(q.raw);
+
+        const soldBase = fromBaseUnits(q.amountIn, baseDecimals);
+        const boughtQuote = fromBaseUnits(q.amountOut, tokenDecimals(quoteToken));
+
+        contender.ethBalance -= soldBase;
+        contender.usdcBalance += boughtQuote;
+        contender.tradeCount += 1;
+        state.trades += 1;
+
+        const trade: TradeEvent = {
+          event: "trade_executed",
+          contender: contender.name,
+          txHash: `0x${randomUUID().replace(/-/g, "").slice(0, 32)}`,
+          sold: { token: baseToken, amount: Number(soldBase.toFixed(tokenDecimals(baseToken) <= 9 ? 6 : 8)) },
+          bought: { token: quoteToken, amount: Number(boughtQuote.toFixed(6)) },
+          gasUsd: Number((Math.random() * 1.5 + 0.8).toFixed(2)),
+          timestamp: new Date().toISOString(),
+          executionMode: "uniswap_quote_mock",
+          quoteRouting: q.routing,
+          mockSwapBuild: mockBuild,
+          approvalRequestId,
+        };
+
+        this.store.addTrade(matchId, trade);
+        this.publishEnvelope(matchId, "trade_executed", trade);
+        return true;
+      }
+
+      return false;
+    } catch (err) {
+      console.error("[Uniswap] quote/approval path failed; falling back to paper math:", err);
+      return false;
+    }
+  }
+
+  /** Price-oracle style paper amounts (legacy). */
+  private applyDecisionPaper(
+    matchId: string,
+    contender: ContenderRuntime,
+    state: ContenderState,
+    signal: StrategySignal,
+    currentPrice: number,
+    baseToken: string,
+    quoteToken: string,
+    maxTradeUsd: number,
+  ): void {
     if (signal.action === "buy") {
       let amountUsd = Math.min(signal.amount, contender.usdcBalance, maxTradeUsd);
       if (amountUsd < 10) return;
@@ -280,6 +452,7 @@ export class RealMatchService implements MatchService {
         bought: { token: baseToken, amount: Number(ethBought.toFixed(6)) },
         gasUsd: Number((Math.random() * 1.5 + 0.8).toFixed(2)),
         timestamp: new Date().toISOString(),
+        executionMode: "paper",
       };
 
       this.store.addTrade(matchId, trade);
@@ -307,6 +480,7 @@ export class RealMatchService implements MatchService {
         bought: { token: quoteToken, amount: Number((amountEth * currentPrice).toFixed(2)) },
         gasUsd: Number((Math.random() * 1.5 + 0.8).toFixed(2)),
         timestamp: new Date().toISOString(),
+        executionMode: "paper",
       };
 
       this.store.addTrade(matchId, trade);
