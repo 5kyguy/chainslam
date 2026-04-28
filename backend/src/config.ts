@@ -74,6 +74,3 @@ export function getConfig(): AppConfig {
   };
 }
 
-export function isAnthropicProvider(provider: string): boolean {
-  return provider === "anthropic";
-}
