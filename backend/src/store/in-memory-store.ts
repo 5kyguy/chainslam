@@ -28,6 +28,15 @@ export class InMemoryStore implements Store {
     this.tradeHistoryByMatchId.set(matchId, trades);
   }
 
+  updateTradeExecution(matchId: string, tradeRecordId: string, patch: Partial<TradeEvent>): void {
+    const trades = this.tradeHistoryByMatchId.get(matchId);
+    if (!trades) return;
+    const idx = trades.findIndex((t) => t.tradeRecordId === tradeRecordId);
+    if (idx === -1) return;
+    trades[idx] = { ...trades[idx], ...patch };
+    this.tradeHistoryByMatchId.set(matchId, trades);
+  }
+
   addDecision(matchId: string, decision: DecisionEvent): void {
     const feed = this.decisionFeedByMatchId.get(matchId) ?? [];
     feed.push(decision);

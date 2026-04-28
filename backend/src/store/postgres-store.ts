@@ -51,7 +51,9 @@ CREATE TABLE IF NOT EXISTS trades (
   bought_token TEXT NOT NULL,
   bought_amount DOUBLE PRECISION NOT NULL,
   gas_usd DOUBLE PRECISION NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  trade_record_id TEXT,
+  execution_metadata JSONB DEFAULT '{}'::jsonb
 );
 
 CREATE TABLE IF NOT EXISTS decisions (
@@ -79,6 +81,17 @@ CREATE TABLE IF NOT EXISTS leaderboard (
 );
 `;
 
+/** Applied after SCHEMA for databases created before KeeperHub audit columns existed */
+const SCHEMA_MIGRATIONS = `
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS trade_record_id TEXT;
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS execution_metadata JSONB DEFAULT '{}'::jsonb;
+CREATE UNIQUE INDEX IF NOT EXISTS trades_trade_record_id_uidx ON trades (trade_record_id) WHERE trade_record_id IS NOT NULL;
+ALTER TABLE matches ADD COLUMN IF NOT EXISTS contender_a_starting_capital_usd DOUBLE PRECISION;
+ALTER TABLE matches ADD COLUMN IF NOT EXISTS contender_b_starting_capital_usd DOUBLE PRECISION;
+UPDATE matches SET contender_a_starting_capital_usd = starting_capital_usd WHERE contender_a_starting_capital_usd IS NULL;
+UPDATE matches SET contender_b_starting_capital_usd = starting_capital_usd WHERE contender_b_starting_capital_usd IS NULL;
+`;
+
 export class PostgresStore extends InMemoryStore {
   private readonly pool: Pool;
 
@@ -89,6 +102,7 @@ export class PostgresStore extends InMemoryStore {
 
   override async init(): Promise<void> {
     await this.pool.query(SCHEMA);
+    await this.pool.query(SCHEMA_MIGRATIONS);
     await this.loadFromDb();
   }
 
@@ -128,11 +142,41 @@ export class PostgresStore extends InMemoryStore {
 
   override addTrade(matchId: string, trade: TradeEvent): void {
     super.addTrade(matchId, trade);
+    const executionMeta = executionMetadataFromTrade(trade);
     this.pool.query(
-      `INSERT INTO trades (match_id, contender, tx_hash, sold_token, sold_amount, bought_token, bought_amount, gas_usd, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-      [matchId, trade.contender, trade.txHash, trade.sold.token, trade.sold.amount, trade.bought.token, trade.bought.amount, trade.gasUsd, trade.timestamp],
+      `INSERT INTO trades (match_id, contender, tx_hash, sold_token, sold_amount, bought_token, bought_amount, gas_usd, created_at, trade_record_id, execution_metadata)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)`,
+      [
+        matchId,
+        trade.contender,
+        trade.txHash,
+        trade.sold.token,
+        trade.sold.amount,
+        trade.bought.token,
+        trade.bought.amount,
+        trade.gasUsd,
+        trade.timestamp,
+        trade.tradeRecordId ?? null,
+        JSON.stringify(executionMeta),
+      ],
     ).catch((err) => console.error("[PostgresStore] addTrade:", err));
+  }
+
+  override updateTradeExecution(matchId: string, tradeRecordId: string, patch: Partial<TradeEvent>): void {
+    super.updateTradeExecution(matchId, tradeRecordId, patch);
+
+    const metaPatch = executionPatchToJson(patch);
+    const mergedJson = JSON.stringify(metaPatch);
+
+    const newTxHash = patch.txHash ?? patch.onChainTxHash;
+
+    this.pool.query(
+      `UPDATE trades SET
+        tx_hash = COALESCE($1::text, tx_hash),
+        execution_metadata = COALESCE(execution_metadata, '{}'::jsonb) || $2::jsonb
+       WHERE match_id = $3 AND trade_record_id = $4`,
+      [newTxHash ?? null, mergedJson, matchId, tradeRecordId],
+    ).catch((err) => console.error("[PostgresStore] updateTradeExecution:", err));
   }
 
   override addDecision(matchId: string, decision: DecisionEvent): void {
@@ -212,8 +256,9 @@ export class PostgresStore extends InMemoryStore {
       `INSERT INTO matches (id, status, created_at, started_at, ends_at, token_pair, starting_capital_usd, duration_seconds,
          time_remaining_seconds, eth_price,
          contender_a_name, contender_a_pnl_pct, contender_a_portfolio_usd, contender_a_trades,
-         contender_b_name, contender_b_pnl_pct, contender_b_portfolio_usd, contender_b_trades)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+         contender_b_name, contender_b_pnl_pct, contender_b_portfolio_usd, contender_b_trades,
+         contender_a_starting_capital_usd, contender_b_starting_capital_usd)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
        ON CONFLICT (id) DO UPDATE SET
          status=EXCLUDED.status, time_remaining_seconds=EXCLUDED.time_remaining_seconds, eth_price=EXCLUDED.eth_price,
          contender_a_pnl_pct=EXCLUDED.contender_a_pnl_pct, contender_a_portfolio_usd=EXCLUDED.contender_a_portfolio_usd,
@@ -223,7 +268,8 @@ export class PostgresStore extends InMemoryStore {
       [match.id, match.status, match.createdAt, match.startedAt, match.endsAt, match.tokenPair,
         match.startingCapitalUsd, match.durationSeconds, match.timeRemainingSeconds, match.ethPrice,
         match.contenders.A.name, match.contenders.A.pnlPct, match.contenders.A.portfolioUsd, match.contenders.A.trades,
-        match.contenders.B.name, match.contenders.B.pnlPct, match.contenders.B.portfolioUsd, match.contenders.B.trades],
+        match.contenders.B.name, match.contenders.B.pnlPct, match.contenders.B.portfolioUsd, match.contenders.B.trades,
+        match.contenders.A.startingCapitalUsd, match.contenders.B.startingCapitalUsd],
     ).catch((err) => console.error("[PostgresStore] upsertMatch:", err));
   }
 }
@@ -264,14 +310,74 @@ function rowToMatch(r: Row): MatchState {
     timeRemainingSeconds: Number(r.time_remaining_seconds),
     ethPrice: Number(r.eth_price),
     contenders: {
-      A: { name: r.contender_a_name as string, pnlPct: Number(r.contender_a_pnl_pct), portfolioUsd: Number(r.contender_a_portfolio_usd), trades: Number(r.contender_a_trades) },
-      B: { name: r.contender_b_name as string, pnlPct: Number(r.contender_b_pnl_pct), portfolioUsd: Number(r.contender_b_portfolio_usd), trades: Number(r.contender_b_trades) },
+      A: {
+        name: r.contender_a_name as string,
+        startingCapitalUsd: Number(
+          r.contender_a_starting_capital_usd != null ? r.contender_a_starting_capital_usd : r.starting_capital_usd,
+        ),
+        pnlPct: Number(r.contender_a_pnl_pct),
+        portfolioUsd: Number(r.contender_a_portfolio_usd),
+        trades: Number(r.contender_a_trades),
+      },
+      B: {
+        name: r.contender_b_name as string,
+        startingCapitalUsd: Number(
+          r.contender_b_starting_capital_usd != null ? r.contender_b_starting_capital_usd : r.starting_capital_usd,
+        ),
+        pnlPct: Number(r.contender_b_pnl_pct),
+        portfolioUsd: Number(r.contender_b_portfolio_usd),
+        trades: Number(r.contender_b_trades),
+      },
     },
   };
 }
 
+function executionMetadataFromTrade(trade: TradeEvent): Record<string, unknown> {
+  const {
+    event: _e,
+    contender: _c,
+    txHash: _tx,
+    sold: _s,
+    bought: _b,
+    gasUsd: _g,
+    timestamp: _t,
+    tradeRecordId: _tr,
+    ...rest
+  } = trade;
+  return rest as Record<string, unknown>;
+}
+
+function executionPatchToJson(patch: Partial<TradeEvent>): Record<string, unknown> {
+  const skip = new Set([
+    "event",
+    "contender",
+    "sold",
+    "bought",
+    "gasUsd",
+    "timestamp",
+  ]);
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(patch)) {
+    if (skip.has(k)) continue;
+    if (v !== undefined) out[k] = v;
+  }
+  return out;
+}
+
 function rowToTrade(r: Row): TradeEvent {
-  return {
+  const metaRaw = r.execution_metadata;
+  const meta =
+    metaRaw !== null &&
+    metaRaw !== undefined &&
+    typeof metaRaw === "object" &&
+    !Array.isArray(metaRaw)
+      ? ({ ...(metaRaw as Record<string, unknown>) } as Partial<TradeEvent>)
+      : ({} as Partial<TradeEvent>);
+
+  const tradeRecordIdCol = r.trade_record_id != null ? String(r.trade_record_id) : undefined;
+
+  const core: TradeEvent = {
+    ...meta,
     event: "trade_executed",
     contender: r.contender as string,
     txHash: r.tx_hash as string,
@@ -279,7 +385,10 @@ function rowToTrade(r: Row): TradeEvent {
     bought: { token: r.bought_token as string, amount: Number(r.bought_amount) },
     gasUsd: Number(r.gas_usd),
     timestamp: r.created_at as string,
+    tradeRecordId: tradeRecordIdCol ?? meta.tradeRecordId,
   };
+
+  return core;
 }
 
 function rowToDecision(r: Row): DecisionEvent {

@@ -6,6 +6,8 @@ export interface Store {
   updateMatch(match: MatchState): void;
 
   addTrade(matchId: string, trade: TradeEvent): void;
+  /** Merge execution fields into an existing trade (KeeperHub receipts, tx hash). Idempotent per `tradeRecordId`. */
+  updateTradeExecution(matchId: string, tradeRecordId: string, patch: Partial<TradeEvent>): void;
   addDecision(matchId: string, decision: DecisionEvent): void;
   getTrades(matchId: string): TradeEvent[];
   getFeed(matchId: string): FeedEvent[];

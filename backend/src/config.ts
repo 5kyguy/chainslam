@@ -1,3 +1,15 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+/**
+ * Absolute path to the repo `agents/` directory (contains `chain_slam_agents/`).
+ * Resolved from `backend/src` or `backend/dist` so local runs work without setting `AGENTS_PACKAGE_DIR`.
+ */
+export function resolveDefaultAgentsPackageDir(): string {
+  const configDir = path.dirname(fileURLToPath(import.meta.url));
+  return path.resolve(configDir, "../../agents");
+}
+
 export interface AppConfig {
   port: number;
   host: string;
@@ -18,10 +30,57 @@ export interface AppConfig {
     maxRetries: number;
     /** `mock` = never call POST /swap; `live` = build unsigned txs via POST /swap (requires signing/broadcast). */
     swapMode: "mock" | "live";
+    /** When true, sends `x-permit2-disabled: true` on quote/check_approval/swap (proxy ERC-20 approve flow; no Permit2 EIP-712 sig). */
+    permit2Disabled: boolean;
+    /** Must stay consistent across quote and swap (Uniswap API). */
+    universalRouterVersion: string;
+    /** Optional hex signature for Permit2 when quote returns permitData (live swap). */
+    permitSignature: string;
   };
   agents: {
     pythonPath: string;
     packageDir: string;
+  };
+  /** KeeperHub Direct Execution — optional; routes unsigned Uniswap swaps via `/execute/contract-call`. */
+  keeperhub: {
+    apiKey: string;
+    baseUrl: string;
+    timeoutMs: number;
+    maxRetries: number;
+    /** Background poll interval for execution status (ms). */
+    pollIntervalMs: number;
+    /** Max status polls per execution before giving up. */
+    maxPollAttempts: number;
+  };
+  /** Per-trade floors/caps and default bankroll for API (micro-live vs conservative). */
+  trading: {
+    /** Skip trades below this USD notional (buys / sells). */
+    minTradeUsd: number;
+    /**
+     * Hard ceiling on USD notional per trade (applied after %-of-capital rule).
+     * Use `Infinity` when env unset — only %-of-capital applies.
+     */
+    maxTradeUsdAbsolute: number;
+    /** Default per-agent starting USD when POST body omits capital fields. */
+    defaultPerAgentStartingCapitalUsd: number;
+  };
+  /** 0G Storage — optional agent/match memory (KV) mirror for Phase 7C. */
+  zerog: {
+    enabled: boolean;
+    evmRpc: string;
+    indexerRpc: string;
+    kvRpc: string;
+    /** Wallet private key with gas on 0G chain for KV writes (never commit real funds). */
+    privateKey: string;
+    /** KV stream id (hex `0x…`) where keys are written. */
+    streamId: string;
+    /** Prefix for KV keys, e.g. `agentslam/v1`. */
+    keyPrefix: string;
+    maxRetries: number;
+    /** Debounce window before flushing accumulated events to 0G (ms). */
+    flushDebounceMs: number;
+    /** Cooldown after a failed KV flush/write attempt (ms). Prevents tight retry loops while nodes are still syncing. */
+    writeCooldownMs: number;
   };
 }
 
@@ -38,6 +97,23 @@ function parseSwapMode(raw: string | undefined): "mock" | "live" {
   const v = (raw ?? "mock").toLowerCase();
   if (v === "live") return "live";
   return "mock";
+}
+
+function envBool(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const v = raw.toLowerCase();
+  if (v === "true" || v === "1" || v === "yes") return true;
+  if (v === "false" || v === "0" || v === "no") return false;
+  return fallback;
+}
+
+/** Empty/unset env → Infinity (no absolute cap). */
+function envNumberOrInfinity(name: string): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return Number.POSITIVE_INFINITY;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : Number.POSITIVE_INFINITY;
 }
 
 export function getConfig(): AppConfig {
@@ -65,10 +141,38 @@ export function getConfig(): AppConfig {
       timeoutMs: envNumber("UNISWAP_TIMEOUT_MS", 15000),
       maxRetries: envNumber("UNISWAP_MAX_RETRIES", 2),
       swapMode: parseSwapMode(process.env.UNISWAP_SWAP_MODE),
+      permit2Disabled: envBool("UNISWAP_PERMIT2_DISABLED", false),
+      universalRouterVersion: process.env.UNISWAP_UNIVERSAL_ROUTER_VERSION ?? "2.0",
+      permitSignature: process.env.UNISWAP_PERMIT_SIGNATURE ?? "",
     },
     agents: {
       pythonPath: process.env.AGENTS_PYTHON_PATH ?? "python3",
-      packageDir: process.env.AGENTS_PACKAGE_DIR ?? "",
+      packageDir: process.env.AGENTS_PACKAGE_DIR ?? resolveDefaultAgentsPackageDir(),
+    },
+    keeperhub: {
+      apiKey: process.env.KEEPERHUB_API_KEY ?? "",
+      baseUrl: process.env.KEEPERHUB_BASE_URL ?? "https://app.keeperhub.com/api",
+      timeoutMs: envNumber("KEEPERHUB_TIMEOUT_MS", 30_000),
+      maxRetries: envNumber("KEEPERHUB_MAX_RETRIES", 3),
+      pollIntervalMs: envNumber("KEEPERHUB_POLL_INTERVAL_MS", 5000),
+      maxPollAttempts: envNumber("KEEPERHUB_MAX_POLL_ATTEMPTS", 120),
+    },
+    trading: {
+      minTradeUsd: envNumber("MIN_TRADE_USD", 0.1),
+      maxTradeUsdAbsolute: envNumberOrInfinity("MAX_TRADE_USD_ABSOLUTE"),
+      defaultPerAgentStartingCapitalUsd: envNumber("DEFAULT_PER_AGENT_STARTING_CAPITAL_USD", 1000),
+    },
+    zerog: {
+      enabled: envBool("ZEROG_ENABLED", true),
+      evmRpc: process.env.ZEROG_EVM_RPC ?? "",
+      indexerRpc: process.env.ZEROG_INDEXER_RPC ?? "",
+      kvRpc: process.env.ZEROG_KV_RPC ?? "",
+      privateKey: process.env.ZEROG_PRIVATE_KEY ?? "",
+      streamId: process.env.ZEROG_KV_STREAM_ID ?? "",
+      keyPrefix: process.env.ZEROG_KEY_PREFIX ?? "agentslam/v1",
+      maxRetries: envNumber("ZEROG_MAX_RETRIES", 3),
+      flushDebounceMs: envNumber("ZEROG_FLUSH_DEBOUNCE_MS", 1200),
+      writeCooldownMs: envNumber("ZEROG_WRITE_COOLDOWN_MS", 300000),
     },
   };
 }

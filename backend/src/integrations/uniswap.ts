@@ -7,6 +7,10 @@ export interface UniswapClientConfig {
   swapperAddress: string;
   timeoutMs: number;
   maxRetries: number;
+  permit2Disabled: boolean;
+  universalRouterVersion: string;
+  /** Used when `/quote` returns `permitData` and you need POST /swap without disabling Permit2. */
+  permitSignature: string;
 }
 
 export interface PriceResult {
@@ -24,6 +28,7 @@ export interface UniswapQuoteResponse {
   quote?: unknown;
   routing?: string;
   requestId?: string;
+  permitData?: unknown;
   [key: string]: unknown;
 }
 
@@ -54,6 +59,23 @@ export interface MockSwapBuild {
     amountOut?: string;
   };
   note: string;
+}
+
+/** Successful `POST /swap` — contains unsigned tx fields for signing/broadcast. */
+export interface CreateSwapResult {
+  requestId?: string;
+  swap: {
+    to?: string;
+    from?: string;
+    data?: string;
+    value?: string;
+    chainId?: number;
+    gasLimit?: string;
+    maxFeePerGas?: string;
+    maxPriorityFeePerGas?: string;
+  };
+  gasFee?: string;
+  raw: Record<string, unknown>;
 }
 
 interface QuoteRequestBody {
@@ -89,6 +111,19 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export function gasUsdFromQuoteResponse(raw: UniswapQuoteResponse): number | undefined {
+  const q = raw.quote;
+  if (!q || typeof q !== "object") return undefined;
+  const rec = q as Record<string, unknown>;
+  const g = rec.gasFeeUSD;
+  if (typeof g === "number" && Number.isFinite(g)) return g;
+  if (typeof g === "string") {
+    const n = Number(g);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  return undefined;
+}
+
 export function extractAmountsFromQuoteResponse(data: UniswapQuoteResponse): { amountIn: string; amountOut: string } | null {
   const quote = data.quote;
   if (!quote || typeof quote !== "object") return null;
@@ -98,6 +133,21 @@ export function extractAmountsFromQuoteResponse(data: UniswapQuoteResponse): { a
       amountIn: String((quote as ClassicQuote).amountIn),
       amountOut: String((quote as ClassicQuote).amountOut),
     };
+  }
+
+  /** Trading API variant: `quote.input` / `quote.output` with `amount` (base units) per token */
+  if ("input" in quote && "output" in quote) {
+    const inp = (quote as { input?: unknown }).input;
+    const out = (quote as { output?: unknown }).output;
+    if (inp && out && typeof inp === "object" && typeof out === "object") {
+      const inRec = inp as Record<string, unknown>;
+      const outRec = out as Record<string, unknown>;
+      const ai = inRec.amount;
+      const ao = outRec.amount;
+      if (typeof ai === "string" && typeof ao === "string" && ai.length > 0 && ao.length > 0) {
+        return { amountIn: ai, amountOut: ao };
+      }
+    }
   }
 
   if ("orderInfo" in quote) {
@@ -207,6 +257,67 @@ export class UniswapClient {
   /**
    * Does **not** call `POST /swap`. Builds demo metadata from a real quote so production can swap `quote` → `POST /swap` later.
    */
+  /**
+   * Real `POST /swap` — returns unsigned transaction (`swap`) for wallet signing / RPC broadcast.
+   * If `/quote` returned `permitData`, you must supply an EIP-712 signature (see `UNISWAP_PERMIT_SIGNATURE`)
+   * or use `UNISWAP_PERMIT2_DISABLED=true` so quotes omit Permit2.
+   */
+  async createProtocolSwap(
+    fullQuoteResponse: UniswapQuoteResponse,
+    options?: { signature?: string },
+  ): Promise<CreateSwapResult> {
+    const quoteObj = fullQuoteResponse.quote;
+    if (!quoteObj || typeof quoteObj !== "object") {
+      throw new Error("Quote response missing nested `quote`; cannot POST /swap");
+    }
+
+    const permitData = fullQuoteResponse.permitData;
+    const sigRaw = options?.signature ?? this.config.permitSignature?.trim();
+    const sig = sigRaw && sigRaw.length > 0
+      ? (sigRaw.startsWith("0x") ? sigRaw : `0x${sigRaw}`)
+      : undefined;
+
+    const body: Record<string, unknown> = {
+      quote: quoteObj,
+      refreshGasPrice: true,
+      simulateTransaction: false,
+    };
+
+    if (permitData != null && typeof permitData === "object") {
+      if (!sig) {
+        throw new Error(
+          "Quote returned permitData but no signature was provided. Set UNISWAP_PERMIT_SIGNATURE, or set UNISWAP_PERMIT2_DISABLED=true for proxy approval flow.",
+        );
+      }
+      body.signature = sig;
+      body.permitData = permitData;
+    }
+
+    const raw = await this.postWithRetry<Record<string, unknown>>("/swap", body);
+
+    const swapUnknown = raw.swap;
+    if (!swapUnknown || typeof swapUnknown !== "object") {
+      throw new Error("POST /swap response missing `swap` object");
+    }
+    const swap = swapUnknown as Record<string, unknown>;
+
+    return {
+      requestId: typeof raw.requestId === "string" ? raw.requestId : undefined,
+      swap: {
+        to: typeof swap.to === "string" ? swap.to : undefined,
+        from: typeof swap.from === "string" ? swap.from : undefined,
+        data: typeof swap.data === "string" ? swap.data : undefined,
+        value: typeof swap.value === "string" ? swap.value : undefined,
+        chainId: typeof swap.chainId === "number" ? swap.chainId : undefined,
+        gasLimit: typeof swap.gasLimit === "string" ? swap.gasLimit : undefined,
+        maxFeePerGas: typeof swap.maxFeePerGas === "string" ? swap.maxFeePerGas : undefined,
+        maxPriorityFeePerGas: typeof swap.maxPriorityFeePerGas === "string" ? swap.maxPriorityFeePerGas : undefined,
+      },
+      gasFee: typeof raw.gasFee === "string" ? raw.gasFee : undefined,
+      raw: raw as Record<string, unknown>,
+    };
+  }
+
   buildMockSwapBuild(fullQuoteResponse: UniswapQuoteResponse): MockSwapBuild {
     const amounts = extractAmountsFromQuoteResponse(fullQuoteResponse);
     const routing = typeof fullQuoteResponse.routing === "string" ? fullQuoteResponse.routing : undefined;
@@ -246,6 +357,22 @@ export class UniswapClient {
     return this.postWithRetry<UniswapQuoteResponse>("/quote", body);
   }
 
+  private headersForTrading(extra?: Record<string, string>): Record<string, string> {
+    const headers: Record<string, string> = {
+      "x-api-key": this.config.apiKey,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      "x-universal-router-version": this.config.universalRouterVersion,
+    };
+    if (this.config.permit2Disabled) {
+      headers["x-permit2-disabled"] = "true";
+    }
+    if (extra) {
+      Object.assign(headers, extra);
+    }
+    return headers;
+  }
+
   private async postWithRetry<T>(path: string, body: unknown, extraHeaders?: Record<string, string>): Promise<T> {
     let lastError: Error | undefined;
 
@@ -254,12 +381,7 @@ export class UniswapClient {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), this.config.timeoutMs);
 
-        const headers: Record<string, string> = {
-          "x-api-key": this.config.apiKey,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-          ...extraHeaders,
-        };
+        const headers = this.headersForTrading(extraHeaders);
 
         const resp = await fetch(`${this.config.baseUrl}${path}`, {
           method: "POST",

@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { matchCreateSchema, paramsWithIdSchema } from "../schemas/contracts.js";
+import { matchCreateSchema, memoryListQuerySchema, paramsWithIdSchema } from "../schemas/contracts.js";
 import type { MatchCreateRequest } from "../types.js";
 
 export async function registerHttpRoutes(app: FastifyInstance): Promise<void> {
@@ -15,8 +15,10 @@ export async function registerHttpRoutes(app: FastifyInstance): Promise<void> {
       agentA: body.agentA,
       agentB: body.agentB,
       tokenPair: body.tokenPair,
-      startingCapitalUsd: body.startingCapitalUsd ?? 1000,
-      durationSeconds: body.durationSeconds ?? 300
+      startingCapitalUsd: body.startingCapitalUsd,
+      startingCapitalUsdA: body.startingCapitalUsdA,
+      startingCapitalUsdB: body.startingCapitalUsdB,
+      durationSeconds: body.durationSeconds ?? 300,
     });
     return reply.code(201).send(created);
   });
@@ -56,4 +58,60 @@ export async function registerHttpRoutes(app: FastifyInstance): Promise<void> {
     }
     return stopped;
   });
+
+  app.get<{
+    Params: { id: string };
+    Querystring: { limit?: number; cursor?: number };
+  }>(
+    "/api/matches/:id/memory",
+    {
+      schema: {
+        ...paramsWithIdSchema,
+        ...memoryListQuerySchema,
+      },
+    },
+    async (request, reply) => {
+      const match = app.matchService.getMatch(request.params.id);
+      if (!match) {
+        return reply.code(404).send({ message: "Match not found" });
+      }
+      const limit = request.query.limit ?? 100;
+      const cursor = request.query.cursor ?? 0;
+      return app.matchService.getMatchMemory(request.params.id, { limit, cursor });
+    },
+  );
+
+  app.get<{ Params: { id: string } }>(
+    "/api/matches/:id/memory/zg",
+    { schema: paramsWithIdSchema },
+    async (request, reply) => {
+      const match = app.matchService.getMatch(request.params.id);
+      if (!match) {
+        return reply.code(404).send({ message: "Match not found" });
+      }
+      return app.matchService.getMatchMemoryFromZg(request.params.id);
+    },
+  );
+
+  app.get<{
+    Params: { id: string };
+    Querystring: { limit?: number; cursor?: number };
+  }>(
+    "/api/agents/:id/memory",
+    {
+      schema: {
+        ...paramsWithIdSchema,
+        ...memoryListQuerySchema,
+      },
+    },
+    async (request, reply) => {
+      const agent = app.agentService.get(request.params.id);
+      if (!agent) {
+        return reply.code(404).send({ message: "Agent not found" });
+      }
+      const limit = request.query.limit ?? 100;
+      const cursor = request.query.cursor ?? 0;
+      return app.matchService.getAgentMemory(request.params.id, { limit, cursor });
+    },
+  );
 }

@@ -5,7 +5,13 @@ import type { AgentService } from "./agent-service.js";
 import type { MatchService } from "./match-service.js";
 import type { Store } from "../store/store.js";
 import type { AgentProcessManager, ManagedAgent } from "../agents/process-manager.js";
-import type { UniswapClient } from "../integrations/uniswap.js";
+import {
+  gasUsdFromQuoteResponse,
+  type UniswapClient,
+  type UniswapQuoteResponse,
+} from "../integrations/uniswap.js";
+import type { KeeperHubClient } from "../integrations/keeperhub.js";
+import { KeeperHubExecutionPoller } from "./keeperhub-execution-poller.js";
 import { fromBaseUnits, tokenDecimals, toBaseUnits } from "../integrations/tokens.js";
 import type {
   ContenderState,
@@ -17,12 +23,17 @@ import type {
   TradeEvent,
   WsEnvelope,
 } from "../types.js";
+import { computeMatchOutcome } from "./match-outcome.js";
+import type { MemoryPage, MemoryQuery, ZeroGMemoryService } from "./zerog-memory-service.js";
+import { clampMaxTradeUsd, pnlPctFromPortfolio } from "./trading-policy.js";
 
 interface ContenderRuntime {
   agentId: string;
   name: string;
   strategy: string;
   managed: ManagedAgent;
+  /** Initial USDC bankroll for sizing and PnL (matches ContenderState.startingCapitalUsd). */
+  startingCapitalUsd: number;
   usdcBalance: number;
   ethBalance: number;
   tradeCount: number;
@@ -36,7 +47,6 @@ export class RealMatchService implements MatchService {
   private readonly runtimes = new Map<string, { a: ContenderRuntime; b: ContenderRuntime }>();
   private readonly priceHistories = new Map<string, number[]>();
   private readonly tickNumbers = new Map<string, number>();
-  private warnedLiveSwapMode = false;
 
   constructor(
     private readonly config: AppConfig,
@@ -44,6 +54,9 @@ export class RealMatchService implements MatchService {
     private readonly store: Store,
     private readonly processManager: AgentProcessManager,
     private readonly uniswap: UniswapClient,
+    private readonly keeperHub?: KeeperHubClient,
+    private readonly keeperHubPoller?: KeeperHubExecutionPoller,
+    private readonly zeroGMemory?: ZeroGMemoryService,
   ) {}
 
   createMatch(input: MatchCreateRequest): MatchState {
@@ -59,7 +72,8 @@ export class RealMatchService implements MatchService {
 
     const now = Date.now();
     const duration = input.durationSeconds ?? 300;
-    const capital = input.startingCapitalUsd ?? 1000;
+    const { capitalA, capitalB } = this.resolveStartingCapitals(input);
+    const aggregateCapitalUsd = Math.max(capitalA, capitalB);
     const id = `match_${randomUUID().slice(0, 8)}`;
     const initialPrice = this.lastKnownPrice ?? FALLBACK_INITIAL_PRICE;
 
@@ -73,19 +87,37 @@ export class RealMatchService implements MatchService {
       startedAt: new Date(now).toISOString(),
       endsAt: new Date(now + duration * 1000).toISOString(),
       tokenPair: input.tokenPair,
-      startingCapitalUsd: capital,
+      startingCapitalUsd: aggregateCapitalUsd,
       durationSeconds: duration,
       timeRemainingSeconds: duration,
       ethPrice: initialPrice,
       contenders: {
-        A: { name: agentA.name, pnlPct: 0, portfolioUsd: capital, trades: 0 },
-        B: { name: agentB.name, pnlPct: 0, portfolioUsd: capital, trades: 0 },
+        A: { name: agentA.name, startingCapitalUsd: capitalA, pnlPct: 0, portfolioUsd: capitalA, trades: 0 },
+        B: { name: agentB.name, startingCapitalUsd: capitalB, pnlPct: 0, portfolioUsd: capitalB, trades: 0 },
       },
     };
 
     this.runtimes.set(id, {
-      a: { agentId: agentA.id, name: agentA.name, strategy: agentA.strategy, managed: managedA, usdcBalance: capital, ethBalance: 0, tradeCount: 0 },
-      b: { agentId: agentB.id, name: agentB.name, strategy: agentB.strategy, managed: managedB, usdcBalance: capital, ethBalance: 0, tradeCount: 0 },
+      a: {
+        agentId: agentA.id,
+        name: agentA.name,
+        strategy: agentA.strategy,
+        managed: managedA,
+        startingCapitalUsd: capitalA,
+        usdcBalance: capitalA,
+        ethBalance: 0,
+        tradeCount: 0,
+      },
+      b: {
+        agentId: agentB.id,
+        name: agentB.name,
+        strategy: agentB.strategy,
+        managed: managedB,
+        startingCapitalUsd: capitalB,
+        usdcBalance: capitalB,
+        ethBalance: 0,
+        tradeCount: 0,
+      },
     });
 
     this.priceHistories.set(id, [initialPrice]);
@@ -100,7 +132,38 @@ export class RealMatchService implements MatchService {
     this.publishEnvelope(id, "snapshot", match);
 
     setTimeout(() => this.startLoop(id), AGENT_CONNECT_WAIT_MS);
+
+    this.zeroGMemory?.recordMatchStarted({
+      matchId: id,
+      tokenPair: input.tokenPair,
+      startingCapitalUsd: aggregateCapitalUsd,
+      startingCapitalUsdA: capitalA,
+      startingCapitalUsdB: capitalB,
+      durationSeconds: duration,
+      contenderA: { agentId: agentA.id, name: agentA.name, strategy: agentA.strategy },
+      contenderB: { agentId: agentB.id, name: agentB.name, strategy: agentB.strategy },
+    });
+
     return match;
+  }
+
+  private resolveStartingCapitals(input: MatchCreateRequest): { capitalA: number; capitalB: number } {
+    const hasA = input.startingCapitalUsdA !== undefined;
+    const hasB = input.startingCapitalUsdB !== undefined;
+    if (hasA !== hasB) {
+      throw new Error("startingCapitalUsdA and startingCapitalUsdB must both be provided or both omitted.");
+    }
+    if (hasA && hasB) {
+      if (input.startingCapitalUsdA! < 1 || input.startingCapitalUsdB! < 1) {
+        throw new Error("Per-agent starting capital must be at least 1 USD.");
+      }
+      return { capitalA: input.startingCapitalUsdA!, capitalB: input.startingCapitalUsdB! };
+    }
+    const shared = input.startingCapitalUsd ?? this.config.trading.defaultPerAgentStartingCapitalUsd;
+    if (shared < 1) {
+      throw new Error("startingCapitalUsd must be at least 1 USD.");
+    }
+    return { capitalA: shared, capitalB: shared };
   }
 
   getMatch(id: string): MatchState | undefined {
@@ -123,6 +186,19 @@ export class RealMatchService implements MatchService {
     match.status = "stopped";
     match.timeRemainingSeconds = Math.max(0, Math.floor((new Date(match.endsAt).getTime() - Date.now()) / 1000));
     this.store.updateMatch(match);
+    const pair = this.runtimes.get(id);
+    if (pair) {
+      const oc = computeMatchOutcome(match);
+      this.zeroGMemory?.recordMatchStopped({
+        matchId: id,
+        status: "stopped",
+        contenders: {
+          A: { agentId: pair.a.agentId, name: pair.a.name, pnlPct: match.contenders.A.pnlPct, portfolioUsd: match.contenders.A.portfolioUsd },
+          B: { agentId: pair.b.agentId, name: pair.b.name, pnlPct: match.contenders.B.pnlPct, portfolioUsd: match.contenders.B.portfolioUsd },
+        },
+        outcome: oc,
+      });
+    }
     this.killAgents(id);
     this.publishEnvelope(id, "stopped", match);
     return match;
@@ -134,6 +210,32 @@ export class RealMatchService implements MatchService {
 
   getLeaderboard() {
     return this.store.getLeaderboard();
+  }
+
+  getMatchMemory(matchId: string, query?: MemoryQuery): MemoryPage {
+    if (!this.zeroGMemory) {
+      return { events: [], nextCursor: null, source: "memory" };
+    }
+    return this.zeroGMemory.getMatchMemoryPage(matchId, query);
+  }
+
+  getAgentMemory(agentId: string, query?: MemoryQuery): MemoryPage {
+    if (!this.zeroGMemory) {
+      return { events: [], nextCursor: null, source: "memory" };
+    }
+    return this.zeroGMemory.getAgentMemoryPage(agentId, query);
+  }
+
+  async getMatchMemoryFromZg(matchId: string): Promise<{ raw: string | null; configured: boolean }> {
+    if (!this.zeroGMemory) {
+      return { raw: null, configured: false };
+    }
+    const configured = this.zeroGMemory.isEnabled();
+    if (!configured) {
+      return { raw: null, configured: false };
+    }
+    const { raw } = await this.zeroGMemory.fetchMatchSnapshotFromZg(matchId);
+    return { raw, configured: true };
   }
 
   onWsConnect(matchId: string, send: (payload: unknown) => void): () => void {
@@ -199,6 +301,17 @@ export class RealMatchService implements MatchService {
       this.store.updateMatch(match);
       this.killAgents(matchId);
       this.publishEnvelope(matchId, "completed", match);
+      const oc = computeMatchOutcome(match);
+      this.zeroGMemory?.recordMatchCompleted({
+        matchId,
+        tokenPair: match.tokenPair,
+        startingCapitalUsd: match.startingCapitalUsd,
+        contenders: {
+          A: { agentId: pair.a.agentId, name: pair.a.name, pnlPct: match.contenders.A.pnlPct, portfolioUsd: match.contenders.A.portfolioUsd, trades: match.contenders.A.trades },
+          B: { agentId: pair.b.agentId, name: pair.b.name, pnlPct: match.contenders.B.pnlPct, portfolioUsd: match.contenders.B.portfolioUsd, trades: match.contenders.B.trades },
+        },
+        outcome: oc,
+      });
       this.updateStatsAndLeaderboard(match, pair);
     }
   }
@@ -214,6 +327,9 @@ export class RealMatchService implements MatchService {
     totalTicks: number,
   ): Promise<StrategySignal> {
     const contenderState = match.contenders[side];
+    const maxTradeUsd = clampMaxTradeUsd(contender.startingCapitalUsd, {
+      maxTradeUsdAbsolute: this.config.trading.maxTradeUsdAbsolute,
+    });
     const ctx: TickContext = {
       tokenPair: match.tokenPair,
       ethPrice: currentPrice,
@@ -225,6 +341,8 @@ export class RealMatchService implements MatchService {
       tradeCount: contender.tradeCount,
       tickNumber,
       ticksRemaining: Math.max(0, totalTicks - tickNumber),
+      minTradeUsd: this.config.trading.minTradeUsd,
+      maxTradeUsd,
     };
 
     let signal: StrategySignal;
@@ -247,6 +365,13 @@ export class RealMatchService implements MatchService {
 
     this.store.addDecision(matchId, decision);
     this.publishEnvelope(matchId, "decision", decision);
+    this.zeroGMemory?.recordDecision({
+      matchId,
+      agentId: contender.agentId,
+      contenderName: contender.name,
+      tickNumber,
+      decision,
+    });
     return signal;
   }
 
@@ -260,17 +385,12 @@ export class RealMatchService implements MatchService {
   ): Promise<void> {
     if (signal.action === "hold") return;
 
-    if (this.config.uniswap.swapMode === "live" && !this.warnedLiveSwapMode) {
-      console.warn(
-        "[RealMatchService] UNISWAP_SWAP_MODE=live: POST /swap is not wired yet; trades still use real quotes + mock swap metadata only (no on-chain swap).",
-      );
-      this.warnedLiveSwapMode = true;
-    }
-
     const [base, quote] = match.tokenPair.split("/");
     const baseToken = base ?? "WETH";
     const quoteToken = quote ?? "USDC";
-    const maxTradeUsd = match.startingCapitalUsd * 0.5;
+    const maxTradeUsd = clampMaxTradeUsd(contender.startingCapitalUsd, {
+      maxTradeUsdAbsolute: this.config.trading.maxTradeUsdAbsolute,
+    });
 
     const handled = await this.tryApplyDecisionWithUniswapQuotes(
       matchId,
@@ -287,8 +407,42 @@ export class RealMatchService implements MatchService {
     this.applyDecisionPaper(matchId, contender, state, signal, currentPrice, baseToken, quoteToken, maxTradeUsd);
   }
 
+  private async resolveSwapMetadata(raw: UniswapQuoteResponse): Promise<{
+    executionMode: NonNullable<TradeEvent["executionMode"]>;
+    mockSwapBuild?: TradeEvent["mockSwapBuild"];
+    unsignedSwap?: TradeEvent["unsignedSwap"];
+    swapRequestId?: string;
+    swapError?: string;
+  }> {
+    if (this.config.uniswap.swapMode === "mock") {
+      return {
+        executionMode: "uniswap_quote_mock",
+        mockSwapBuild: this.uniswap.buildMockSwapBuild(raw),
+      };
+    }
+    try {
+      const built = await this.uniswap.createProtocolSwap(raw);
+      return {
+        executionMode: "uniswap_live_swap",
+        swapRequestId: built.requestId,
+        unsignedSwap: {
+          ...built.swap,
+          gasFee: built.gasFee,
+        },
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[Uniswap] POST /swap failed:", err);
+      return {
+        executionMode: "uniswap_live_swap",
+        swapError: msg,
+        mockSwapBuild: this.uniswap.buildMockSwapBuild(raw),
+      };
+    }
+  }
+
   /**
-   * Real `/quote` route sizes + `/check_approval`; mock swap metadata only (never POST /swap).
+   * Real `/quote` route sizes + `/check_approval`; `POST /swap` when `UNISWAP_SWAP_MODE=live`.
    */
   private async tryApplyDecisionWithUniswapQuotes(
     matchId: string,
@@ -300,10 +454,11 @@ export class RealMatchService implements MatchService {
     quoteToken: string,
     maxTradeUsd: number,
   ): Promise<boolean> {
+    const minTradeUsd = this.config.trading.minTradeUsd;
     try {
       if (signal.action === "buy") {
         let amountUsd = Math.min(signal.amount, contender.usdcBalance, maxTradeUsd);
-        if (amountUsd < 10) return true;
+        if (amountUsd < minTradeUsd) return true;
 
         const quoteDecimals = tokenDecimals(quoteToken);
         const amountInBaseUnits = (BigInt(Math.round(amountUsd * 10 ** quoteDecimals))).toString();
@@ -325,7 +480,8 @@ export class RealMatchService implements MatchService {
           console.error("[Uniswap] check_approval failed (continuing with quote fill):", apErr);
         }
 
-        const mockBuild = this.uniswap.buildMockSwapBuild(q.raw);
+        const swapMeta = await this.resolveSwapMetadata(q.raw);
+        const gasUsd = gasUsdFromQuoteResponse(q.raw) ?? Number((Math.random() * 1.5 + 0.8).toFixed(2));
 
         const debitQuote = fromBaseUnits(q.amountIn, quoteDecimals);
         const creditBase = fromBaseUnits(q.amountOut, tokenDecimals(baseToken));
@@ -336,27 +492,38 @@ export class RealMatchService implements MatchService {
         state.trades += 1;
 
         const trade: TradeEvent = {
+          tradeRecordId: randomUUID(),
           event: "trade_executed",
           contender: contender.name,
           txHash: `0x${randomUUID().replace(/-/g, "").slice(0, 32)}`,
           sold: { token: quoteToken, amount: Number(debitQuote.toFixed(quoteDecimals <= 9 ? 6 : 8)) },
           bought: { token: baseToken, amount: Number(creditBase.toFixed(tokenDecimals(baseToken) <= 9 ? 6 : 8)) },
-          gasUsd: Number((Math.random() * 1.5 + 0.8).toFixed(2)),
+          gasUsd,
           timestamp: new Date().toISOString(),
-          executionMode: "uniswap_quote_mock",
+          executionMode: swapMeta.executionMode,
           quoteRouting: q.routing,
-          mockSwapBuild: mockBuild,
+          mockSwapBuild: swapMeta.mockSwapBuild,
+          unsignedSwap: swapMeta.unsignedSwap,
+          swapRequestId: swapMeta.swapRequestId,
+          swapError: swapMeta.swapError,
           approvalRequestId,
         };
 
         this.store.addTrade(matchId, trade);
         this.publishEnvelope(matchId, "trade_executed", trade);
+        this.zeroGMemory?.recordTrade({
+          matchId,
+          agentId: contender.agentId,
+          contenderName: contender.name,
+          trade,
+        });
+        this.enqueueKeeperHubSubmission(matchId, trade);
         return true;
       }
 
       if (signal.action === "sell") {
         let amountBase = Math.min(signal.amount, contender.ethBalance);
-        if (amountBase < 10 / currentPrice) return true;
+        if (amountBase < minTradeUsd / currentPrice) return true;
 
         let amountUsd = amountBase * currentPrice;
         if (amountUsd > maxTradeUsd) {
@@ -384,7 +551,8 @@ export class RealMatchService implements MatchService {
           console.error("[Uniswap] check_approval failed (continuing with quote fill):", apErr);
         }
 
-        const mockBuild = this.uniswap.buildMockSwapBuild(q.raw);
+        const swapMeta = await this.resolveSwapMetadata(q.raw);
+        const gasUsd = gasUsdFromQuoteResponse(q.raw) ?? Number((Math.random() * 1.5 + 0.8).toFixed(2));
 
         const soldBase = fromBaseUnits(q.amountIn, baseDecimals);
         const boughtQuote = fromBaseUnits(q.amountOut, tokenDecimals(quoteToken));
@@ -395,21 +563,32 @@ export class RealMatchService implements MatchService {
         state.trades += 1;
 
         const trade: TradeEvent = {
+          tradeRecordId: randomUUID(),
           event: "trade_executed",
           contender: contender.name,
           txHash: `0x${randomUUID().replace(/-/g, "").slice(0, 32)}`,
           sold: { token: baseToken, amount: Number(soldBase.toFixed(tokenDecimals(baseToken) <= 9 ? 6 : 8)) },
           bought: { token: quoteToken, amount: Number(boughtQuote.toFixed(6)) },
-          gasUsd: Number((Math.random() * 1.5 + 0.8).toFixed(2)),
+          gasUsd,
           timestamp: new Date().toISOString(),
-          executionMode: "uniswap_quote_mock",
+          executionMode: swapMeta.executionMode,
           quoteRouting: q.routing,
-          mockSwapBuild: mockBuild,
+          mockSwapBuild: swapMeta.mockSwapBuild,
+          unsignedSwap: swapMeta.unsignedSwap,
+          swapRequestId: swapMeta.swapRequestId,
+          swapError: swapMeta.swapError,
           approvalRequestId,
         };
 
         this.store.addTrade(matchId, trade);
         this.publishEnvelope(matchId, "trade_executed", trade);
+        this.zeroGMemory?.recordTrade({
+          matchId,
+          agentId: contender.agentId,
+          contenderName: contender.name,
+          trade,
+        });
+        this.enqueueKeeperHubSubmission(matchId, trade);
         return true;
       }
 
@@ -431,9 +610,10 @@ export class RealMatchService implements MatchService {
     quoteToken: string,
     maxTradeUsd: number,
   ): void {
+    const minTradeUsd = this.config.trading.minTradeUsd;
     if (signal.action === "buy") {
       let amountUsd = Math.min(signal.amount, contender.usdcBalance, maxTradeUsd);
-      if (amountUsd < 10) return;
+      if (amountUsd < minTradeUsd) return;
 
       const ethBought = amountUsd / currentPrice;
       contender.usdcBalance -= amountUsd;
@@ -442,6 +622,7 @@ export class RealMatchService implements MatchService {
       state.trades += 1;
 
       const trade: TradeEvent = {
+        tradeRecordId: randomUUID(),
         event: "trade_executed", contender: contender.name,
         txHash: `0x${randomUUID().replace(/-/g, "").slice(0, 32)}`,
         sold: { token: quoteToken, amount: Number(amountUsd.toFixed(2)) },
@@ -453,11 +634,17 @@ export class RealMatchService implements MatchService {
 
       this.store.addTrade(matchId, trade);
       this.publishEnvelope(matchId, "trade_executed", trade);
+      this.zeroGMemory?.recordTrade({
+        matchId,
+        agentId: contender.agentId,
+        contenderName: contender.name,
+        trade,
+      });
     }
 
     if (signal.action === "sell") {
       let amountEth = Math.min(signal.amount, contender.ethBalance);
-      if (amountEth < 10 / currentPrice) return;
+      if (amountEth < minTradeUsd / currentPrice) return;
 
       const amountUsd = amountEth * currentPrice;
       if (amountUsd > maxTradeUsd) {
@@ -470,6 +657,7 @@ export class RealMatchService implements MatchService {
       state.trades += 1;
 
       const trade: TradeEvent = {
+        tradeRecordId: randomUUID(),
         event: "trade_executed", contender: contender.name,
         txHash: `0x${randomUUID().replace(/-/g, "").slice(0, 32)}`,
         sold: { token: baseToken, amount: Number(amountEth.toFixed(6)) },
@@ -481,6 +669,12 @@ export class RealMatchService implements MatchService {
 
       this.store.addTrade(matchId, trade);
       this.publishEnvelope(matchId, "trade_executed", trade);
+      this.zeroGMemory?.recordTrade({
+        matchId,
+        agentId: contender.agentId,
+        contenderName: contender.name,
+        trade,
+      });
     }
   }
 
@@ -488,8 +682,8 @@ export class RealMatchService implements MatchService {
     const price = match.ethPrice;
     match.contenders.A.portfolioUsd = Number((pair.a.usdcBalance + pair.a.ethBalance * price).toFixed(2));
     match.contenders.B.portfolioUsd = Number((pair.b.usdcBalance + pair.b.ethBalance * price).toFixed(2));
-    match.contenders.A.pnlPct = Number(((match.contenders.A.portfolioUsd / match.startingCapitalUsd - 1) * 100).toFixed(2));
-    match.contenders.B.pnlPct = Number(((match.contenders.B.portfolioUsd / match.startingCapitalUsd - 1) * 100).toFixed(2));
+    match.contenders.A.pnlPct = pnlPctFromPortfolio(match.contenders.A.portfolioUsd, match.contenders.A.startingCapitalUsd);
+    match.contenders.B.pnlPct = pnlPctFromPortfolio(match.contenders.B.portfolioUsd, match.contenders.B.startingCapitalUsd);
   }
 
   private async fetchPrice(fallbackPrice: number, tokenPair: string): Promise<number> {
@@ -517,23 +711,9 @@ export class RealMatchService implements MatchService {
   }
 
   private updateStatsAndLeaderboard(match: MatchState, pair: { a: ContenderRuntime; b: ContenderRuntime }): void {
+    const { resultA, resultB } = computeMatchOutcome(match);
     const pnlA = match.contenders.A.pnlPct;
     const pnlB = match.contenders.B.pnlPct;
-    const drawThreshold = 0.25;
-
-    let resultA: "win" | "loss" | "draw";
-    let resultB: "win" | "loss" | "draw";
-
-    if (Math.abs(pnlA - pnlB) < drawThreshold) {
-      resultA = "draw";
-      resultB = "draw";
-    } else if (pnlA > pnlB) {
-      resultA = "win";
-      resultB = "loss";
-    } else {
-      resultA = "loss";
-      resultB = "win";
-    }
 
     this.agentService.updateStats(pair.a.agentId, resultA, pnlA);
     this.agentService.updateStats(pair.b.agentId, resultB, pnlB);
@@ -555,6 +735,65 @@ export class RealMatchService implements MatchService {
       avgPnlPct: agent.stats.avgPnlPct,
       matchesPlayed: agent.stats.matchesPlayed,
     })));
+  }
+
+  private enqueueKeeperHubSubmission(matchId: string, trade: TradeEvent): void {
+    if (!this.keeperHub || !this.keeperHubPoller) return;
+    if (this.config.uniswap.swapMode !== "live") return;
+    const recordId = trade.tradeRecordId;
+    if (!recordId) return;
+    if (!trade.unsignedSwap || trade.swapError) return;
+
+    void this.processKeeperHubSubmission(matchId, recordId, trade);
+  }
+
+  private async processKeeperHubSubmission(
+    matchId: string,
+    tradeRecordId: string,
+    trade: TradeEvent,
+  ): Promise<void> {
+    const kh = this.keeperHub;
+    const poller = this.keeperHubPoller;
+    if (!kh || !poller) return;
+
+    const submission = await kh.submitUnsignedSwap(trade.unsignedSwap!, this.config.uniswap.chainId);
+
+    if (!submission.ok) {
+      this.store.updateTradeExecution(matchId, tradeRecordId, {
+        lastExecutionError: submission.error,
+        keeperhubRetryCount: submission.httpRetries,
+      });
+      this.publishUpdatedTrade(matchId, tradeRecordId);
+      return;
+    }
+
+    const raw = submission.result.raw;
+    let execReceipt: Record<string, unknown> | undefined;
+    if (raw && typeof raw === "object") {
+      const o = raw as Record<string, unknown>;
+      execReceipt =
+        "data" in o && o.data !== undefined && typeof o.data === "object" && o.data !== null
+          ? (o.data as Record<string, unknown>)
+          : { ...o };
+    }
+
+    this.store.updateTradeExecution(matchId, tradeRecordId, {
+      keeperhubSubmissionId: submission.result.executionId,
+      keeperhubStatus: submission.result.status,
+      keeperhubRetryCount: submission.httpRetries,
+      executionReceipt: execReceipt ?? { raw },
+    });
+
+    poller.register(matchId, tradeRecordId, submission.result.executionId);
+    this.publishUpdatedTrade(matchId, tradeRecordId);
+  }
+
+  private publishUpdatedTrade(matchId: string, tradeRecordId: string): void {
+    const trades = this.store.getTrades(matchId);
+    const t = trades.find((x) => x.tradeRecordId === tradeRecordId);
+    if (t) {
+      this.publishEnvelope(matchId, "trade_executed", t);
+    }
   }
 
   private publishEnvelope(matchId: string, eventType: WsEnvelope["event"], payload: unknown): void {

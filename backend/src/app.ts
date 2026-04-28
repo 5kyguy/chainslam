@@ -1,3 +1,5 @@
+import "./load-env.js";
+
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
@@ -6,7 +8,7 @@ import { registerHttpRoutes } from "./routes/http-routes.js";
 import { registerAgentRoutes } from "./routes/agent-routes.js";
 import { registerWsRoutes } from "./routes/ws-routes.js";
 import { registerAgentWsRoutes } from "./routes/agent-ws-routes.js";
-import { createMatchService } from "./services/service-factory.js";
+import { buildMatchServiceBundle } from "./services/service-factory.js";
 import { AgentService } from "./services/agent-service.js";
 import { AgentProcessManager } from "./agents/process-manager.js";
 import { createStore } from "./store/index.js";
@@ -33,7 +35,10 @@ export async function createApp() {
   const processManager = new AgentProcessManager(config, wsBaseUrl);
   const agentService = new AgentService(config, store);
 
-  app.decorate("matchService", createMatchService(config, agentService, store, processManager));
+  const { matchService, keeperHubPoller } = buildMatchServiceBundle(config, agentService, store, processManager);
+  keeperHubPoller?.start();
+
+  app.decorate("matchService", matchService);
   app.decorate("agentService", agentService);
   await app.register(cors, { origin: config.corsOrigin });
   await app.register(websocket);
