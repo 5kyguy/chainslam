@@ -1,4 +1,5 @@
 import type { AppConfig } from "../config.js";
+import { AppError } from "../errors.js";
 import { AgentRegistry } from "../agents/agent-registry.js";
 import { compileStrategyPrompt, isValidStrategyId } from "../agents/strategies/strategy-compiler.js";
 import { STRATEGIES } from "./strategy-catalog.js";
@@ -11,8 +12,10 @@ export class AgentService {
 
   create(input: AgentCreateRequest): AgentState {
     if (!isValidStrategyId(input.strategy)) {
-      throw new Error(
+      throw new AppError(
+        "VALIDATION_ERROR",
         `Unknown strategy: "${input.strategy}". Valid options: ${[...STRATEGIES.map((s) => s.id), "custom"].join(", ")}`,
+        { statusCode: 400, details: { strategy: input.strategy } },
       );
     }
 

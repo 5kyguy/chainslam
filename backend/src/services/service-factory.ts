@@ -4,6 +4,9 @@ import type { AgentService } from "./agent-service.js";
 import { DummyMatchService } from "./dummy-match-service.js";
 import { RealMatchService } from "./real-match-service.js";
 import { UniswapClient } from "../integrations/uniswap.js";
+import { KeeperHubClient } from "../integrations/keeperhub.js";
+import { ExecutionService } from "./execution-service.js";
+import { AppError } from "../errors.js";
 
 export function createMatchService(config: AppConfig, agentService: AgentService): MatchService {
   if (config.backendMode === "real") {
@@ -18,7 +21,23 @@ export function createMatchService(config: AppConfig, agentService: AgentService
         })
       : undefined;
 
-    return new RealMatchService(config, agentService, uniswap);
+    if (config.keeperhub.enabled && !config.keeperhub.apiKey) {
+      throw new AppError("KEEPERHUB_CONFIG_MISSING", "KEEPERHUB_API_KEY is required when KEEPERHUB_ENABLED=true", {
+        statusCode: 500,
+      });
+    }
+    if (config.keeperhub.enabled && !uniswap) {
+      throw new AppError("KEEPERHUB_CONFIG_MISSING", "UNISWAP_ENABLED=true and UNISWAP_API_KEY are required for KeeperHub-backed trades", {
+        statusCode: 500,
+      });
+    }
+
+    const keeperhub = config.keeperhub.enabled
+      ? new KeeperHubClient(config.keeperhub)
+      : undefined;
+    const executionService = new ExecutionService(config, uniswap, keeperhub);
+
+    return new RealMatchService(config, agentService, uniswap, executionService);
   }
   return new DummyMatchService(config);
 }

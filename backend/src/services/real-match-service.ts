@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { AppConfig } from "../config.js";
+import { AppError } from "../errors.js";
 import { AgentRuntime } from "../agents/agent-runtime.js";
 import { store } from "../store/in-memory-store.js";
 import { STRATEGIES } from "./strategy-catalog.js";
 import type { AgentService } from "./agent-service.js";
 import type { MatchService } from "./match-service.js";
 import type { UniswapClient } from "../integrations/uniswap.js";
+import { ExecutionService } from "./execution-service.js";
 import type {
   ContenderState,
   DecisionEvent,
@@ -15,6 +17,8 @@ import type {
   StrategySignal,
   TickContext,
   TradeEvent,
+  TradeFailedEvent,
+  TradeSubmittedEvent,
   WsEnvelope,
 } from "../types.js";
 
@@ -39,6 +43,7 @@ export class RealMatchService implements MatchService {
     private readonly config: AppConfig,
     private readonly agentService: AgentService,
     private readonly uniswap?: UniswapClient,
+    private readonly executionService = new ExecutionService(config, uniswap),
   ) {}
 
   createMatch(input: MatchCreateRequest): MatchState {
@@ -46,10 +51,16 @@ export class RealMatchService implements MatchService {
     const agentB = this.agentService.get(input.agentB);
 
     if (!agentA || agentA.status !== "ready") {
-      throw new Error(`Agent A "${input.agentA}" not found or not available (status: ${agentA?.status ?? "missing"})`);
+      throw new AppError("AGENT_NOT_AVAILABLE", `Agent A "${input.agentA}" not found or not available`, {
+        statusCode: 400,
+        details: { agentId: input.agentA, status: agentA?.status ?? "missing" },
+      });
     }
     if (!agentB || agentB.status !== "ready") {
-      throw new Error(`Agent B "${input.agentB}" not found or not available (status: ${agentB?.status ?? "missing"})`);
+      throw new AppError("AGENT_NOT_AVAILABLE", `Agent B "${input.agentB}" not found or not available`, {
+        statusCode: 400,
+        details: { agentId: input.agentB, status: agentB?.status ?? "missing" },
+      });
     }
 
     const now = Date.now();
@@ -117,6 +128,10 @@ export class RealMatchService implements MatchService {
 
   getTrades(id: string): unknown[] {
     return store.tradeHistoryByMatchId.get(id) ?? [];
+  }
+
+  getExecutions(id: string): unknown[] {
+    return this.getTrades(id);
   }
 
   getFeed(id: string): unknown[] {
@@ -270,78 +285,60 @@ export class RealMatchService implements MatchService {
     this.publishEnvelope(matchId, "decision", decision);
 
     if (signal.action !== "hold") {
-      this.applyTrade(matchId, match, contender, contenderState, signal, currentPrice);
+      await this.executeTrade(matchId, match, contender, contenderState, signal, currentPrice, tickNumber);
     }
   }
 
-  private applyTrade(
+  private async executeTrade(
     matchId: string,
     match: MatchState,
     contender: ContenderRuntime,
     state: ContenderState,
     signal: StrategySignal,
     currentPrice: number,
-  ): void {
-    const [base, quote] = match.tokenPair.split("/");
-    const baseToken = base ?? "WETH";
-    const quoteToken = quote ?? "USDC";
-    const maxTradeUsd = match.startingCapitalUsd * 0.5;
+    tickNumber: number,
+  ): Promise<void> {
+    if (signal.action !== "buy" && signal.action !== "sell") return;
 
-    if (signal.action === "buy") {
-      let amountUsd = Math.min(signal.amount, contender.usdcBalance, maxTradeUsd);
-      if (amountUsd < 10) return;
-
-      const ethBought = amountUsd / currentPrice;
-      contender.usdcBalance -= amountUsd;
-      contender.ethBalance += ethBought;
-      contender.tradeCount += 1;
-      state.trades += 1;
-
-      const trade: TradeEvent = {
-        event: "trade_executed",
+    const outcome = await this.executionService.executeTrade(
+      {
+        matchId,
         contender: contender.name,
-        txHash: `0x${randomUUID().replace(/-/g, "").slice(0, 32)}`,
-        sold: { token: quoteToken, amount: Number(amountUsd.toFixed(2)) },
-        bought: { token: baseToken, amount: Number(ethBought.toFixed(6)) },
-        gasUsd: Number((Math.random() * 1.5 + 0.8).toFixed(2)),
-        timestamp: new Date().toISOString(),
-      };
+        action: signal.action,
+        tokenPair: match.tokenPair,
+        signalAmount: signal.amount,
+        currentPrice,
+        usdcBalance: contender.usdcBalance,
+        ethBalance: contender.ethBalance,
+        startingCapitalUsd: match.startingCapitalUsd,
+        tickNumber,
+      },
+      {
+        onSubmitted: (event) => this.recordTradeLifecycleEvent(matchId, event),
+      },
+    );
 
-      const trades = store.tradeHistoryByMatchId.get(matchId) ?? [];
-      trades.push(trade);
-      store.tradeHistoryByMatchId.set(matchId, trades);
-      this.publishEnvelope(matchId, "trade_executed", trade);
+    if (outcome.type === "skipped") {
+      return;
     }
 
-    if (signal.action === "sell") {
-      let amountEth = Math.min(signal.amount, contender.ethBalance);
-      if (amountEth < 10 / currentPrice) return;
-
-      const amountUsd = amountEth * currentPrice;
-      if (amountUsd > maxTradeUsd) {
-        amountEth = maxTradeUsd / currentPrice;
-      }
-
-      contender.ethBalance -= amountEth;
-      contender.usdcBalance += amountEth * currentPrice;
-      contender.tradeCount += 1;
-      state.trades += 1;
-
-      const trade: TradeEvent = {
-        event: "trade_executed",
-        contender: contender.name,
-        txHash: `0x${randomUUID().replace(/-/g, "").slice(0, 32)}`,
-        sold: { token: baseToken, amount: Number(amountEth.toFixed(6)) },
-        bought: { token: quoteToken, amount: Number((amountEth * currentPrice).toFixed(2)) },
-        gasUsd: Number((Math.random() * 1.5 + 0.8).toFixed(2)),
-        timestamp: new Date().toISOString(),
-      };
-
-      const trades = store.tradeHistoryByMatchId.get(matchId) ?? [];
-      trades.push(trade);
-      store.tradeHistoryByMatchId.set(matchId, trades);
-      this.publishEnvelope(matchId, "trade_executed", trade);
+    if (outcome.type === "failed") {
+      this.recordTradeLifecycleEvent(matchId, outcome.event);
+      return;
     }
+
+    contender.usdcBalance += outcome.usdcDelta;
+    contender.ethBalance += outcome.ethDelta;
+    contender.tradeCount += 1;
+    state.trades += 1;
+    this.recordTradeLifecycleEvent(matchId, outcome.event);
+  }
+
+  private recordTradeLifecycleEvent(matchId: string, event: TradeEvent | TradeSubmittedEvent | TradeFailedEvent): void {
+    const trades = store.tradeHistoryByMatchId.get(matchId) ?? [];
+    trades.push(event);
+    store.tradeHistoryByMatchId.set(matchId, trades);
+    this.publishEnvelope(matchId, event.event, event);
   }
 
   private recalcPortfolios(match: MatchState, pair: { a: ContenderRuntime; b: ContenderRuntime }): void {

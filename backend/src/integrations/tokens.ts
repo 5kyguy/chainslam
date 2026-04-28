@@ -8,6 +8,15 @@ export const KNOWN_TOKENS: Record<string, string> = {
   UNI: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984",
 };
 
+const KNOWN_TOKENS_BY_CHAIN: Record<number, Record<string, string>> = {
+  1: KNOWN_TOKENS,
+  11155111: {
+    ETH: "0x0000000000000000000000000000000000000000",
+    WETH: "0xfff9976782d46cc05630d1f6ebab18b2324d6b14",
+    USDC: "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238",
+  },
+};
+
 export const TOKEN_DECIMALS: Record<string, number> = {
   ETH: 18,
   WETH: 18,
@@ -18,14 +27,16 @@ export const TOKEN_DECIMALS: Record<string, number> = {
   UNI: 18,
 };
 
-export function resolveToken(symbolOrAddress: string): string {
+export function resolveToken(symbolOrAddress: string, chainId = 1): string {
   if (symbolOrAddress.startsWith("0x")) return symbolOrAddress;
-  return KNOWN_TOKENS[symbolOrAddress.toUpperCase()] ?? symbolOrAddress;
+  const tokens = KNOWN_TOKENS_BY_CHAIN[chainId] ?? KNOWN_TOKENS;
+  return tokens[symbolOrAddress.toUpperCase()] ?? KNOWN_TOKENS[symbolOrAddress.toUpperCase()] ?? symbolOrAddress;
 }
 
-export function tokenDecimals(symbolOrAddress: string): number {
+export function tokenDecimals(symbolOrAddress: string, chainId = 1): number {
   if (symbolOrAddress.startsWith("0x")) {
-    for (const [symbol, addr] of Object.entries(KNOWN_TOKENS)) {
+    const tokens = KNOWN_TOKENS_BY_CHAIN[chainId] ?? KNOWN_TOKENS;
+    for (const [symbol, addr] of Object.entries(tokens)) {
       if (addr.toLowerCase() === symbolOrAddress.toLowerCase()) {
         return TOKEN_DECIMALS[symbol] ?? 18;
       }
@@ -36,7 +47,16 @@ export function tokenDecimals(symbolOrAddress: string): number {
 }
 
 export function toBaseUnits(amount: number, decimals: number): string {
-  return (BigInt(Math.round(amount * 10 ** decimals))).toString();
+  if (!Number.isFinite(amount) || amount < 0) {
+    throw new Error("Amount must be a non-negative finite number.");
+  }
+
+  const [whole, fraction = ""] = amount.toString().split(".");
+  if (decimals === 0) {
+    return BigInt(whole).toString();
+  }
+  const paddedFraction = fraction.padEnd(decimals, "0").slice(0, decimals);
+  return BigInt(`${whole}${paddedFraction}`).toString();
 }
 
 export function fromBaseUnits(amount: string, decimals: number): number {

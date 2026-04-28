@@ -152,17 +152,21 @@ export class SimulationEngine {
       if (action !== "hold") {
         contender.trades += 1;
         const [base, quote] = match.tokenPair.split("/");
+        const txHash = `0x${Math.floor(this.random.nextInRange(10 ** 11, 10 ** 12 - 1)).toString(16)}${Date.now().toString(16)}`;
         const trade: TradeEvent = {
           event: "trade_executed",
           contender: contender.name,
-          txHash: `0x${Math.floor(this.random.nextInRange(10 ** 11, 10 ** 12 - 1)).toString(16)}${Date.now().toString(16)}`,
+          txHash,
           sold: action === "buy" ? { token: quote ?? "USDC", amount } : { token: base ?? "WETH", amount: Number((amount / 3400).toFixed(6)) },
           bought:
             action === "buy"
               ? { token: base ?? "WETH", amount: Number((amount / match.ethPrice).toFixed(6)) }
               : { token: quote ?? "USDC", amount },
           gasUsd: Number(this.random.nextInRange(0.8, 2.3).toFixed(2)),
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          executionProvider: "simulated",
+          executionStatus: "completed",
+          transactionHash: txHash,
         };
         events.push(trade);
       }

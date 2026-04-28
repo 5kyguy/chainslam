@@ -31,7 +31,7 @@ type MatchResponse = {
 };
 
 type WsEnvelope = {
-  event: "snapshot" | "decision" | "trade_executed" | "completed" | "stopped";
+  event: "snapshot" | "decision" | "trade_submitted" | "trade_executed" | "trade_failed" | "completed" | "stopped";
   match_id: string;
   timestamp: string;
   payload: unknown;
@@ -185,7 +185,7 @@ function renderLiveAgentTable(state: LiveState, timeRemainingSeconds?: number): 
     console.log(`Last event: ${state.lastEventLabel}`);
   }
   console.log(
-    `Events => snapshot=${state.eventCounts.snapshot}, decision=${state.eventCounts.decision}, trade=${state.eventCounts.trade_executed}, completed=${state.eventCounts.completed}, stopped=${state.eventCounts.stopped}`
+    `Events => snapshot=${state.eventCounts.snapshot}, decision=${state.eventCounts.decision}, submitted=${state.eventCounts.trade_submitted}, trade=${state.eventCounts.trade_executed}, failed=${state.eventCounts.trade_failed}, completed=${state.eventCounts.completed}, stopped=${state.eventCounts.stopped}`
   );
 
   const rows = Object.values(state.agents).map((agent) => {
@@ -304,13 +304,16 @@ async function waitForTerminalEvent(
         const sold = payload.sold ? `${formatNum(payload.sold.amount, 4)} ${payload.sold.token}` : "-";
         const bought = payload.bought ? `${formatNum(payload.bought.amount, 4)} ${payload.bought.token}` : "-";
         state.lastEventLabel = `${state.lastEventLabel} | ${payload.contender} sold ${sold} -> ${bought}`;
+      } else if (parsed.event === "trade_submitted" || parsed.event === "trade_failed") {
+        const payload = parsed.payload as { contender?: string };
+        state.lastEventLabel = `${state.lastEventLabel} | ${payload.contender ?? "unknown"}`;
       } else if (parsed.event === "snapshot") {
         const payload = parsed.payload as MatchResponse;
         lastSnapshot = payload;
         applySnapshot(state, payload);
       }
 
-      if (parsed.event === "decision" || parsed.event === "trade_executed" || parsed.event === "snapshot") {
+      if (parsed.event === "decision" || parsed.event === "trade_submitted" || parsed.event === "trade_executed" || parsed.event === "trade_failed" || parsed.event === "snapshot") {
         const snapshotPayload = parsed.event === "snapshot" ? (parsed.payload as MatchResponse) : undefined;
         renderLiveAgentTable(state, snapshotPayload?.timeRemainingSeconds ?? lastSnapshot?.timeRemainingSeconds);
       }
@@ -423,7 +426,9 @@ async function run() {
     eventCounts: {
       snapshot: 0,
       decision: 0,
+      trade_submitted: 0,
       trade_executed: 0,
+      trade_failed: 0,
       completed: 0,
       stopped: 0,
     },

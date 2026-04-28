@@ -120,7 +120,17 @@ Expected capabilities:
 - Retry failed transactions with bounded gas boosting.
 - Preserve an execution audit trail for each trade.
 
-KeeperHub method names and schemas should be verified against the final SDK or MCP server before implementation.
+The backend integration uses KeeperHub Direct Execution over REST. Chain Slam treats KeeperHub as an external execution provider behind an internal `ExecutionService`: the Referee asks for a trade execution, the service builds the Uniswap quote/swap, submits compatible contract calls to KeeperHub, polls status, and returns either a completed trade or a failed execution event.
+
+Execution events:
+
+| Event | Meaning |
+| ----- | ------- |
+| `trade_submitted` | KeeperHub accepted an execution request |
+| `trade_executed` | KeeperHub completed execution and returned transaction metadata |
+| `trade_failed` | KeeperHub or Uniswap execution failed; portfolio balances were not mutated |
+
+Important implementation constraint: KeeperHub Direct Execution currently documents contract-call execution. If a Uniswap swap response only provides raw calldata and cannot be represented as a KeeperHub contract call, the backend records a clear `UNISWAP_SWAP_UNSUPPORTED` failure instead of faking execution.
 
 ## Match Rules
 

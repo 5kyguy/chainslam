@@ -21,6 +21,18 @@ export interface AppConfig {
     timeoutMs: number;
     maxRetries: number;
   };
+  keeperhub: {
+    enabled: boolean;
+    apiKey: string;
+    baseUrl: string;
+    network: string;
+    timeoutMs: number;
+    pollIntervalMs: number;
+    pollTimeoutMs: number;
+    maxRetries: number;
+    gasLimitMultiplier: string;
+    authMode: "bearer" | "api-key";
+  };
 }
 
 function envNumber(name: string, fallback: number): number {
@@ -37,6 +49,7 @@ export function getConfig(): AppConfig {
   const defaultBaseUrl = llmProvider === "anthropic"
     ? "https://api.anthropic.com/v1"
     : "https://api.openai.com/v1";
+  const keeperAuthMode = process.env.KEEPERHUB_AUTH_MODE === "api-key" ? "api-key" : "bearer";
 
   return {
     port: envNumber("PORT", 8787),
@@ -60,6 +73,18 @@ export function getConfig(): AppConfig {
       swapperAddress: process.env.UNISWAP_SWAPPER_ADDRESS ?? "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
       timeoutMs: envNumber("UNISWAP_TIMEOUT_MS", 15000),
       maxRetries: envNumber("UNISWAP_MAX_RETRIES", 2),
+    },
+    keeperhub: {
+      enabled: process.env.KEEPERHUB_ENABLED === "true",
+      apiKey: process.env.KEEPERHUB_API_KEY ?? "",
+      baseUrl: process.env.KEEPERHUB_BASE_URL ?? "https://app.keeperhub.com",
+      network: process.env.KEEPERHUB_NETWORK ?? "sepolia",
+      timeoutMs: envNumber("KEEPERHUB_TIMEOUT_MS", 20000),
+      pollIntervalMs: envNumber("KEEPERHUB_POLL_INTERVAL_MS", 2000),
+      pollTimeoutMs: envNumber("KEEPERHUB_POLL_TIMEOUT_MS", 60000),
+      maxRetries: envNumber("KEEPERHUB_MAX_RETRIES", 2),
+      gasLimitMultiplier: process.env.KEEPERHUB_GAS_LIMIT_MULTIPLIER ?? "1.2",
+      authMode: keeperAuthMode,
     },
   };
 }

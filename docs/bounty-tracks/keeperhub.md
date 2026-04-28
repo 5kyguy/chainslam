@@ -72,3 +72,22 @@ Generic praise or vague criticism does not qualify.
 - [CLI](https://docs.keeperhub.com/cli)
 - [KeeperHub Documentation](https://docs.keeperhub.com/)
 - [KeeperHub Links](https://keeperhub.com/links)
+
+## Chain Slam Integration Plan
+
+Chain Slam uses KeeperHub as the execution reliability layer for autonomous trading agents.
+
+Flow:
+
+1. A Contender agent publishes a `buy` or `sell` decision.
+2. The backend builds a Uniswap quote/swap.
+3. The execution service submits compatible approvals and swap contract calls through KeeperHub Direct Execution.
+4. The backend stores KeeperHub execution ID, status, transaction hash/link, gas metadata, and errors in the match trade history.
+5. The Referee updates portfolio balances only after successful execution.
+
+Demo proof points:
+
+- `trade_submitted` websocket event shows KeeperHub submission.
+- `trade_executed` includes `keeperExecutionId`, `transactionHash`, and `transactionLink`.
+- `trade_failed` preserves an audit trail without mutating balances.
+- `KEEPERHUB_FEEDBACK.md` captures actionable builder feedback.

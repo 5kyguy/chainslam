@@ -24,6 +24,10 @@ export class DummyMatchService implements MatchService {
     return store.tradeHistoryByMatchId.get(id) ?? [];
   }
 
+  getExecutions(id: string) {
+    return this.getTrades(id);
+  }
+
   getFeed(id: string) {
     return store.decisionFeedByMatchId.get(id) ?? [];
   }
