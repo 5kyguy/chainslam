@@ -1,12 +1,12 @@
 # Technical Spec
 
-This document condenses the original Chain Slam technical draft into the core implementation contracts for the hackathon build.
+This document condenses the original Agent Slam technical draft into the core implementation contracts for the hackathon build.
 
 ## System Components
 
 | Component | Responsibility |
 | --------- | -------------- |
-| Chain Slam UI | Match setup, live leaderboard, decision feed, trade history |
+| Agent Slam UI | Match setup, live leaderboard, decision feed, trade history |
 | Referee agent | Match orchestration, fairness, PnL tracking, winner declaration |
 | Contender agents | Strategy evaluation and trade execution |
 | AXL mesh | Agent communication |
@@ -16,7 +16,7 @@ This document condenses the original Chain Slam technical draft into the core im
 ## Project Structure
 
 ```bash
-chain_slam/
+agent_slam/
 +-- __init__.py
 +-- agents/
 |   +-- referee/
@@ -44,13 +44,13 @@ chain_slam/
 
 ## Internal Shared Module
 
-The shared module contains Chain Slam's internal building blocks: agent base classes, AXL helpers, integration clients, constants, errors, and wallet utilities. It is shared across this project only.
+The shared module contains Agent Slam's internal building blocks: agent base classes, AXL helpers, integration clients, constants, errors, and wallet utilities. It is shared across this project only.
 
-The goal is to keep Referee and Contender implementations small while avoiding premature framework code. Anything in this module should be needed by at least two Chain Slam components or represent a stable external integration boundary.
+The goal is to keep Referee and Contender implementations small while avoiding premature framework code. Anything in this module should be needed by at least two Agent Slam components or represent a stable external integration boundary.
 
 ### AXL Node Wrapper
 
-The AXL wrapper hides direct HTTP calls behind a small async interface. It is intentionally thin: Chain Slam components own match semantics, while this client owns process startup, direct peer sends, and message polling.
+The AXL wrapper hides direct HTTP calls behind a small async interface. It is intentionally thin: Agent Slam components own match semantics, while this client owns process startup, direct peer sends, and message polling.
 
 ```python
 import asyncio
@@ -113,7 +113,7 @@ class AXLNode:
 
 ### GossipSub
 
-Chain Slam models the arena feed as application-level gossip over direct AXL peer messages. A lightweight broadcast helper is enough for the hackathon build.
+Agent Slam models the arena feed as application-level gossip over direct AXL peer messages. A lightweight broadcast helper is enough for the hackathon build.
 
 ```python
 class GossipSub:
@@ -272,7 +272,7 @@ class ErrorCode(str, Enum):
     A2A_INVALID_REQUEST = "E7001"
 
 
-class ChainSlamError(Exception):
+class AgentSlamError(Exception):
     def __init__(self, code: ErrorCode, message: str, details: dict | None = None):
         self.code = code
         self.message = message
@@ -464,11 +464,11 @@ class Match:
     "timestamp": "2026-04-24T15:30:00Z",
     "from": {
       "agent": "Momentum Rider",
-      "axl_node_id": "chain-slam-contender-b"
+      "axl_node_id": "agent-slam-contender-b"
     },
     "to": {
       "agent": "Referee",
-      "axl_node_id": "chain-slam-referee-001"
+      "axl_node_id": "agent-slam-referee-001"
     },
     "type": "trade_report"
   },
@@ -564,11 +564,11 @@ Trade event:
 ## Environment
 
 ```bash
-CHAIN_SLAM_ENV=demo
-CHAIN_SLAM_LOG_LEVEL=INFO
+AGENT_SLAM_ENV=demo
+AGENT_SLAM_LOG_LEVEL=INFO
 
 AXL_BIN_PATH=axl
-CHAIN_SLAM_AXL_NETWORK=chain-slam
+AGENT_SLAM_AXL_NETWORK=agent-slam
 
 UNISWAP_API_KEY=
 UNISWAP_CHAIN_ID=1

@@ -1,4 +1,4 @@
-# Chain Slam Dummy Backend
+# Agent Slam Backend
 
 Fastify server powering the agent-vs-agent trading arena. PostgreSQL for persistence, real Uniswap price feeds optional.
 

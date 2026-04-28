@@ -1,4 +1,4 @@
-# Chain Slam
+# Agent Slam
 
 Agent-vs-agent DeFi trading arena for the [ETHGlobal Open Agents Hackathon](https://ethglobal.com/events/openagents).
 

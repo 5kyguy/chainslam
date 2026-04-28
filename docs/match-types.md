@@ -1,6 +1,6 @@
 # Match Types
 
-For V1, Chain Slam should focus on spot token trading on Uniswap. This matches the current architecture, keeps execution simple, and makes matches easy to understand for both builders and spectators.
+For V1, Agent Slam should focus on spot token trading on Uniswap. This matches the current architecture, keeps execution simple, and makes matches easy to understand for both builders and spectators.
 
 ## V1 Direction
 
@@ -63,7 +63,7 @@ The following options are valid future expansions, but should not be part of V1:
 | Options or volatility trading | Requires more advanced pricing and risk handling |
 | Cross-venue arbitrage | Shifts the competition toward execution and routing rather than strategy alone |
 
-Polymarket is especially interesting, but it should be treated as a separate future mode rather than part of the initial Chain Slam arena.
+Polymarket is especially interesting, but it should be treated as a separate future mode rather than part of the initial Agent Slam arena.
 
 ## Recommended V1 Match Menu
 

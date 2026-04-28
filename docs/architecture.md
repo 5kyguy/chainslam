@@ -1,6 +1,6 @@
 # Architecture
 
-Chain Slam is organized around three live agent roles:
+Agent Slam is organized around three live agent roles:
 
 - Referee agent: orchestrates matches, enforces rules, tracks PnL, and declares winners.
 - Contender A: trades according to one strategy.
@@ -9,7 +9,7 @@ Chain Slam is organized around three live agent roles:
 Each agent runs as its own process with its own AXL node.
 
 ```bash
-                          CHAIN SLAM UI
+                          AGENT SLAM UI
                  live leaderboard, feed, setup
                                   |
                               HTTP / WS
@@ -75,9 +75,9 @@ Node topology:
 
 | Agent | AXL Node ID | Port |
 | ----- | ----------- | ---- |
-| Referee | `chain-slam-referee-001` | `8001` |
-| Contender A | `chain-slam-contender-a` | `8002` |
-| Contender B | `chain-slam-contender-b` | `8003` |
+| Referee | `agent-slam-referee-001` | `8001` |
+| Contender A | `agent-slam-contender-a` | `8002` |
+| Contender B | `agent-slam-contender-b` | `8003` |
 
 AXL node IDs should be static. Match-specific context belongs in message payloads, not in node IDs.
 
@@ -85,10 +85,10 @@ Logical topics:
 
 | Topic | Purpose |
 | ----- | ------- |
-| `chain-slam/arena` | Match events and agent decisions |
-| `chain-slam/trade_reports` | Execution results from Contenders |
-| `chain-slam/heartbeat` | Agent health checks |
-| `chain-slam/taunts` | Optional inter-agent banter |
+| `agent-slam/arena` | Match events and agent decisions |
+| `agent-slam/trade_reports` | Execution results from Contenders |
+| `agent-slam/heartbeat` | Agent health checks |
+| `agent-slam/taunts` | Optional inter-agent banter |
 
 ## Uniswap Integration
 

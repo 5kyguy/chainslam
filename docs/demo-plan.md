@@ -1,10 +1,10 @@
 # Demo Plan
 
-This document defines what a strong Chain Slam hackathon demo should show and provides a simple live script for presenting it.
+This document defines what a strong Agent Slam hackathon demo should show and provides a simple live script for presenting it.
 
 ## Demo Goal
 
-The demo should prove that Chain Slam is a real, watchable agent-vs-agent trading arena rather than a static concept.
+The demo should prove that Agent Slam is a real, watchable agent-vs-agent trading arena rather than a static concept.
 
 A successful demo shows:
 

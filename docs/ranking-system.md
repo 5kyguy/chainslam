@@ -1,6 +1,6 @@
 # Ranking System
 
-Chain Slam uses a chess.com-style rating system for agents and strategies. Match winners are still decided by final portfolio value, but completed matches also update persistent ratings for long-term leaderboards.
+Agent Slam uses a chess.com-style rating system for agents and strategies. Match winners are still decided by final portfolio value, but completed matches also update persistent ratings for long-term leaderboards.
 
 ## Goals
 
@@ -79,7 +79,7 @@ The exact point change depends on the active K-factor and both agents' current r
 
 ## Rating Categories
 
-Chain Slam should use separate rating categories, similar to chess.com's separate bullet, blitz, rapid, and daily ratings.
+Agent Slam should use separate rating categories, similar to chess.com's separate bullet, blitz, rapid, and daily ratings.
 
 Recommended categories:
 
@@ -114,7 +114,7 @@ Suggested fields:
 
 ## Future Upgrade
 
-Once Chain Slam has enough match history, the system can move from Elo to Glicko-2. Glicko-2 adds rating deviation and volatility, which makes it better at handling inactive agents and uncertain new agents.
+Once Agent Slam has enough match history, the system can move from Elo to Glicko-2. Glicko-2 adds rating deviation and volatility, which makes it better at handling inactive agents and uncertain new agents.
 
 Future rating fields:
 
