@@ -86,6 +86,10 @@ const SCHEMA_MIGRATIONS = `
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS trade_record_id TEXT;
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS execution_metadata JSONB DEFAULT '{}'::jsonb;
 CREATE UNIQUE INDEX IF NOT EXISTS trades_trade_record_id_uidx ON trades (trade_record_id) WHERE trade_record_id IS NOT NULL;
+ALTER TABLE matches ADD COLUMN IF NOT EXISTS contender_a_starting_capital_usd DOUBLE PRECISION;
+ALTER TABLE matches ADD COLUMN IF NOT EXISTS contender_b_starting_capital_usd DOUBLE PRECISION;
+UPDATE matches SET contender_a_starting_capital_usd = starting_capital_usd WHERE contender_a_starting_capital_usd IS NULL;
+UPDATE matches SET contender_b_starting_capital_usd = starting_capital_usd WHERE contender_b_starting_capital_usd IS NULL;
 `;
 
 export class PostgresStore extends InMemoryStore {
@@ -252,8 +256,9 @@ export class PostgresStore extends InMemoryStore {
       `INSERT INTO matches (id, status, created_at, started_at, ends_at, token_pair, starting_capital_usd, duration_seconds,
          time_remaining_seconds, eth_price,
          contender_a_name, contender_a_pnl_pct, contender_a_portfolio_usd, contender_a_trades,
-         contender_b_name, contender_b_pnl_pct, contender_b_portfolio_usd, contender_b_trades)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+         contender_b_name, contender_b_pnl_pct, contender_b_portfolio_usd, contender_b_trades,
+         contender_a_starting_capital_usd, contender_b_starting_capital_usd)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
        ON CONFLICT (id) DO UPDATE SET
          status=EXCLUDED.status, time_remaining_seconds=EXCLUDED.time_remaining_seconds, eth_price=EXCLUDED.eth_price,
          contender_a_pnl_pct=EXCLUDED.contender_a_pnl_pct, contender_a_portfolio_usd=EXCLUDED.contender_a_portfolio_usd,
@@ -263,7 +268,8 @@ export class PostgresStore extends InMemoryStore {
       [match.id, match.status, match.createdAt, match.startedAt, match.endsAt, match.tokenPair,
         match.startingCapitalUsd, match.durationSeconds, match.timeRemainingSeconds, match.ethPrice,
         match.contenders.A.name, match.contenders.A.pnlPct, match.contenders.A.portfolioUsd, match.contenders.A.trades,
-        match.contenders.B.name, match.contenders.B.pnlPct, match.contenders.B.portfolioUsd, match.contenders.B.trades],
+        match.contenders.B.name, match.contenders.B.pnlPct, match.contenders.B.portfolioUsd, match.contenders.B.trades,
+        match.contenders.A.startingCapitalUsd, match.contenders.B.startingCapitalUsd],
     ).catch((err) => console.error("[PostgresStore] upsertMatch:", err));
   }
 }
@@ -304,8 +310,24 @@ function rowToMatch(r: Row): MatchState {
     timeRemainingSeconds: Number(r.time_remaining_seconds),
     ethPrice: Number(r.eth_price),
     contenders: {
-      A: { name: r.contender_a_name as string, pnlPct: Number(r.contender_a_pnl_pct), portfolioUsd: Number(r.contender_a_portfolio_usd), trades: Number(r.contender_a_trades) },
-      B: { name: r.contender_b_name as string, pnlPct: Number(r.contender_b_pnl_pct), portfolioUsd: Number(r.contender_b_portfolio_usd), trades: Number(r.contender_b_trades) },
+      A: {
+        name: r.contender_a_name as string,
+        startingCapitalUsd: Number(
+          r.contender_a_starting_capital_usd != null ? r.contender_a_starting_capital_usd : r.starting_capital_usd,
+        ),
+        pnlPct: Number(r.contender_a_pnl_pct),
+        portfolioUsd: Number(r.contender_a_portfolio_usd),
+        trades: Number(r.contender_a_trades),
+      },
+      B: {
+        name: r.contender_b_name as string,
+        startingCapitalUsd: Number(
+          r.contender_b_starting_capital_usd != null ? r.contender_b_starting_capital_usd : r.starting_capital_usd,
+        ),
+        pnlPct: Number(r.contender_b_pnl_pct),
+        portfolioUsd: Number(r.contender_b_portfolio_usd),
+        trades: Number(r.contender_b_trades),
+      },
     },
   };
 }

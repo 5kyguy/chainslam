@@ -35,12 +35,21 @@ export interface MatchCreateRequest {
   agentA: string;
   agentB: string;
   tokenPair: string;
-  startingCapitalUsd: number;
+  /**
+   * Shared per-contender starting USD when `startingCapitalUsdA` / `startingCapitalUsdB` are omitted.
+   * Minimum 1.
+   */
+  startingCapitalUsd?: number;
+  /** Optional per-contender bankrolls (must set both or neither). Minimum 1 each. */
+  startingCapitalUsdA?: number;
+  startingCapitalUsdB?: number;
   durationSeconds: number;
 }
 
 export interface ContenderState {
   name: string;
+  /** Initial USDC bankroll for this contender (PnL denominator). */
+  startingCapitalUsd: number;
   pnlPct: number;
   portfolioUsd: number;
   trades: number;
@@ -53,6 +62,9 @@ export interface MatchState {
   startedAt: string;
   endsAt: string;
   tokenPair: string;
+  /**
+   * Legacy aggregate for APIs: `max(starting capital A, starting capital B)` at match creation.
+   */
   startingCapitalUsd: number;
   durationSeconds: number;
   timeRemainingSeconds: number;
@@ -149,6 +161,10 @@ export interface TickContext {
   tradeCount: number;
   tickNumber: number;
   ticksRemaining: number;
+  /** Matches server `MIN_TRADE_USD`; Python strategies should use instead of hardcoded $10. */
+  minTradeUsd: number;
+  /** Max USD notional per trade for this contender (server clamp); strategies should stay within this band. */
+  maxTradeUsd: number;
 }
 
 export interface StrategySignal {

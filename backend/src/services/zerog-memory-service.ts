@@ -136,6 +136,8 @@ export class ZeroGMemoryService {
     matchId: string;
     tokenPair: string;
     startingCapitalUsd: number;
+    startingCapitalUsdA?: number;
+    startingCapitalUsdB?: number;
     durationSeconds: number;
     contenderA: { agentId: string; name: string; strategy: string };
     contenderB: { agentId: string; name: string; strategy: string };

@@ -6,7 +6,9 @@ export const matchCreateSchema = {
       agentA: { type: "string", minLength: 1 },
       agentB: { type: "string", minLength: 1 },
       tokenPair: { type: "string", minLength: 3 },
-      startingCapitalUsd: { type: "number", minimum: 10, default: 1000 },
+      startingCapitalUsd: { type: "number", minimum: 1, default: 1000 },
+      startingCapitalUsdA: { type: "number", minimum: 1 },
+      startingCapitalUsdB: { type: "number", minimum: 1 },
       durationSeconds: { type: "number", minimum: 30, default: 300 }
     }
   }

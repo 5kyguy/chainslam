@@ -28,6 +28,9 @@ class TickContext:
     trade_count: int
     tick_number: int
     ticks_remaining: int
+    # Sent by backend (MIN_TRADE_USD / per-contender max trade). Defaults match legacy $10-style floors if omitted.
+    min_trade_usd: float = 10.0
+    max_trade_usd: float = 1_000_000.0
 
 
 @dataclass

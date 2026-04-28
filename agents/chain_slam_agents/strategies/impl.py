@@ -11,8 +11,8 @@ class DCAStrategy(Strategy):
         if ctx.tick_number % self.interval != 0:
             return StrategySignal(ActionType.HOLD, 0, "Waiting for next DCA interval.", 0.8)
 
-        amount = min(self.buy_amount, ctx.usdc_balance * 0.3)
-        if amount < 10:
+        amount = min(self.buy_amount, ctx.usdc_balance * 0.3, ctx.max_trade_usd)
+        if amount < ctx.min_trade_usd:
             return StrategySignal(ActionType.HOLD, 0, "Insufficient USDC for DCA buy.", 0.3)
 
         return StrategySignal(
@@ -36,8 +36,8 @@ class MomentumStrategy(Strategy):
 
         if pct_change > 0.3:
             strength = min(pct_change / 2, 1.0)
-            amount = min(ctx.usdc_balance * 0.4 * strength, ctx.usdc_balance * 0.5)
-            if amount < 10:
+            amount = min(ctx.usdc_balance * 0.4 * strength, ctx.usdc_balance * 0.5, ctx.max_trade_usd)
+            if amount < ctx.min_trade_usd:
                 return StrategySignal(ActionType.HOLD, 0, "Position too small.", 0.3)
             return StrategySignal(
                 ActionType.BUY, amount,
@@ -48,7 +48,7 @@ class MomentumStrategy(Strategy):
         if pct_change < -0.3:
             strength = min(abs(pct_change) / 2, 1.0)
             sell_value = ctx.eth_balance * ctx.eth_price * 0.4 * strength
-            if sell_value < 10:
+            if sell_value < ctx.min_trade_usd:
                 return StrategySignal(ActionType.HOLD, 0, "Position too small to sell.", 0.3)
             sell_eth = ctx.eth_balance * 0.4 * strength
             return StrategySignal(
@@ -78,8 +78,8 @@ class MeanReverterStrategy(Strategy):
 
         if deviation_pct < -self.threshold:
             strength = min(abs(deviation_pct) / (self.threshold * 2), 1.0)
-            amount = min(ctx.usdc_balance * 0.4 * strength, ctx.usdc_balance * 0.5)
-            if amount < 10:
+            amount = min(ctx.usdc_balance * 0.4 * strength, ctx.usdc_balance * 0.5, ctx.max_trade_usd)
+            if amount < ctx.min_trade_usd:
                 return StrategySignal(ActionType.HOLD, 0, "Undersized buy.", 0.3)
             return StrategySignal(
                 ActionType.BUY, amount,
@@ -90,7 +90,7 @@ class MeanReverterStrategy(Strategy):
         if deviation_pct > self.threshold:
             strength = min(deviation_pct / (self.threshold * 2), 1.0)
             sell_eth = ctx.eth_balance * 0.4 * strength
-            if sell_eth * ctx.eth_price < 10:
+            if sell_eth * ctx.eth_price < ctx.min_trade_usd:
                 return StrategySignal(ActionType.HOLD, 0, "Undersized sell.", 0.3)
             return StrategySignal(
                 ActionType.SELL, sell_eth,
@@ -113,8 +113,8 @@ class FearGreedStrategy(Strategy):
 
         if recent_change < -1.0:
             fear = min(abs(recent_change) / 3, 1.0)
-            amount = min(ctx.usdc_balance * 0.5 * fear, ctx.usdc_balance * 0.5)
-            if amount < 10:
+            amount = min(ctx.usdc_balance * 0.5 * fear, ctx.usdc_balance * 0.5, ctx.max_trade_usd)
+            if amount < ctx.min_trade_usd:
                 return StrategySignal(ActionType.HOLD, 0, "Too small.", 0.3)
             return StrategySignal(
                 ActionType.BUY, amount,
@@ -125,7 +125,7 @@ class FearGreedStrategy(Strategy):
         if recent_change > 1.0:
             greed = min(recent_change / 3, 1.0)
             sell_eth = ctx.eth_balance * 0.5 * greed
-            if sell_eth * ctx.eth_price < 10:
+            if sell_eth * ctx.eth_price < ctx.min_trade_usd:
                 return StrategySignal(ActionType.HOLD, 0, "Too small.", 0.3)
             return StrategySignal(
                 ActionType.SELL, sell_eth,
@@ -156,8 +156,8 @@ class GridStrategy(Strategy):
         level = max(-self.levels, min(self.levels, level))
 
         if level < 0 and level not in self.trades_at_levels:
-            amount = min(ctx.usdc_balance * 0.2, ctx.usdc_balance * 0.5)
-            if amount < 10:
+            amount = min(ctx.usdc_balance * 0.2, ctx.usdc_balance * 0.5, ctx.max_trade_usd)
+            if amount < ctx.min_trade_usd:
                 return StrategySignal(ActionType.HOLD, 0, "Undersized grid buy.", 0.3)
             self.trades_at_levels.add(level)
             return StrategySignal(
@@ -171,7 +171,7 @@ class GridStrategy(Strategy):
 
         if level > 0 and -level in self.trades_at_levels:
             sell_eth = ctx.eth_balance * 0.2
-            if sell_eth * ctx.eth_price < 10:
+            if sell_eth * ctx.eth_price < ctx.min_trade_usd:
                 return StrategySignal(ActionType.HOLD, 0, "Undersized grid sell.", 0.3)
             self.trades_at_levels.discard(-level)
             return StrategySignal(
@@ -192,18 +192,25 @@ class RandomStrategy(Strategy):
 
     def evaluate(self, ctx: TickContext) -> StrategySignal:
         roll = self.rng.random()
+        mn = ctx.min_trade_usd
+        mx = ctx.max_trade_usd
 
-        if roll < 0.25 and ctx.usdc_balance > 10:
-            amount = self.rng.uniform(20, min(200, ctx.usdc_balance * 0.5))
+        # Buy branch: sized between server min/max trade (works with $1 bankrolls; legacy code required >$10 USDC).
+        if roll < 0.25 and ctx.usdc_balance > mn:
+            low = mn
+            high = min(mx, ctx.usdc_balance * 0.5)
+            if high <= low + 1e-12:
+                return StrategySignal(ActionType.HOLD, 0, self._random_reason("hold"), self.rng.uniform(0.3, 0.6))
+            amount = self.rng.uniform(low, high)
             return StrategySignal(
                 ActionType.BUY, amount,
                 self._random_reason("buy"),
                 self.rng.uniform(0.4, 0.8),
             )
 
-        if roll > 0.75 and ctx.eth_balance * ctx.eth_price > 10:
+        if roll > 0.75 and ctx.eth_balance * ctx.eth_price > mn:
             sell_eth = ctx.eth_balance * self.rng.uniform(0.1, 0.5)
-            if sell_eth * ctx.eth_price < 10:
+            if sell_eth * ctx.eth_price < mn:
                 return StrategySignal(ActionType.HOLD, 0, self._random_reason("hold"), 0.3)
             return StrategySignal(
                 ActionType.SELL, sell_eth,

@@ -52,6 +52,18 @@ export interface AppConfig {
     /** Max status polls per execution before giving up. */
     maxPollAttempts: number;
   };
+  /** Per-trade floors/caps and default bankroll for API (micro-live vs conservative). */
+  trading: {
+    /** Skip trades below this USD notional (buys / sells). */
+    minTradeUsd: number;
+    /**
+     * Hard ceiling on USD notional per trade (applied after %-of-capital rule).
+     * Use `Infinity` when env unset — only %-of-capital applies.
+     */
+    maxTradeUsdAbsolute: number;
+    /** Default per-agent starting USD when POST body omits capital fields. */
+    defaultPerAgentStartingCapitalUsd: number;
+  };
   /** 0G Storage — optional agent/match memory (KV) mirror for Phase 7C. */
   zerog: {
     enabled: boolean;
@@ -96,6 +108,14 @@ function envBool(name: string, fallback: boolean): boolean {
   return fallback;
 }
 
+/** Empty/unset env → Infinity (no absolute cap). */
+function envNumberOrInfinity(name: string): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return Number.POSITIVE_INFINITY;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : Number.POSITIVE_INFINITY;
+}
+
 export function getConfig(): AppConfig {
   const llmProvider = process.env.LLM_PROVIDER ?? "openai";
   const defaultBaseUrl = llmProvider === "anthropic"
@@ -136,6 +156,11 @@ export function getConfig(): AppConfig {
       maxRetries: envNumber("KEEPERHUB_MAX_RETRIES", 3),
       pollIntervalMs: envNumber("KEEPERHUB_POLL_INTERVAL_MS", 5000),
       maxPollAttempts: envNumber("KEEPERHUB_MAX_POLL_ATTEMPTS", 120),
+    },
+    trading: {
+      minTradeUsd: envNumber("MIN_TRADE_USD", 0.1),
+      maxTradeUsdAbsolute: envNumberOrInfinity("MAX_TRADE_USD_ABSOLUTE"),
+      defaultPerAgentStartingCapitalUsd: envNumber("DEFAULT_PER_AGENT_STARTING_CAPITAL_USD", 1000),
     },
     zerog: {
       enabled: envBool("ZEROG_ENABLED", true),

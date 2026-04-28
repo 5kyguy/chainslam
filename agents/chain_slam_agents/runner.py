@@ -35,6 +35,8 @@ async def run(agent_id: str, strategy_id: str, ws_url: str) -> None:
                     trade_count=msg.get("tradeCount", 0),
                     tick_number=msg["tickNumber"],
                     ticks_remaining=msg.get("ticksRemaining", 0),
+                    min_trade_usd=float(msg.get("minTradeUsd", 10)),
+                    max_trade_usd=float(msg.get("maxTradeUsd", 1_000_000)),
                 )
                 signal = strategy.evaluate(ctx)
                 response = {

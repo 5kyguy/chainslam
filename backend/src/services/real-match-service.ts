@@ -25,12 +25,15 @@ import type {
 } from "../types.js";
 import { computeMatchOutcome } from "./match-outcome.js";
 import type { MemoryPage, MemoryQuery, ZeroGMemoryService } from "./zerog-memory-service.js";
+import { clampMaxTradeUsd, pnlPctFromPortfolio } from "./trading-policy.js";
 
 interface ContenderRuntime {
   agentId: string;
   name: string;
   strategy: string;
   managed: ManagedAgent;
+  /** Initial USDC bankroll for sizing and PnL (matches ContenderState.startingCapitalUsd). */
+  startingCapitalUsd: number;
   usdcBalance: number;
   ethBalance: number;
   tradeCount: number;
@@ -69,7 +72,8 @@ export class RealMatchService implements MatchService {
 
     const now = Date.now();
     const duration = input.durationSeconds ?? 300;
-    const capital = input.startingCapitalUsd ?? 1000;
+    const { capitalA, capitalB } = this.resolveStartingCapitals(input);
+    const aggregateCapitalUsd = Math.max(capitalA, capitalB);
     const id = `match_${randomUUID().slice(0, 8)}`;
     const initialPrice = this.lastKnownPrice ?? FALLBACK_INITIAL_PRICE;
 
@@ -83,19 +87,37 @@ export class RealMatchService implements MatchService {
       startedAt: new Date(now).toISOString(),
       endsAt: new Date(now + duration * 1000).toISOString(),
       tokenPair: input.tokenPair,
-      startingCapitalUsd: capital,
+      startingCapitalUsd: aggregateCapitalUsd,
       durationSeconds: duration,
       timeRemainingSeconds: duration,
       ethPrice: initialPrice,
       contenders: {
-        A: { name: agentA.name, pnlPct: 0, portfolioUsd: capital, trades: 0 },
-        B: { name: agentB.name, pnlPct: 0, portfolioUsd: capital, trades: 0 },
+        A: { name: agentA.name, startingCapitalUsd: capitalA, pnlPct: 0, portfolioUsd: capitalA, trades: 0 },
+        B: { name: agentB.name, startingCapitalUsd: capitalB, pnlPct: 0, portfolioUsd: capitalB, trades: 0 },
       },
     };
 
     this.runtimes.set(id, {
-      a: { agentId: agentA.id, name: agentA.name, strategy: agentA.strategy, managed: managedA, usdcBalance: capital, ethBalance: 0, tradeCount: 0 },
-      b: { agentId: agentB.id, name: agentB.name, strategy: agentB.strategy, managed: managedB, usdcBalance: capital, ethBalance: 0, tradeCount: 0 },
+      a: {
+        agentId: agentA.id,
+        name: agentA.name,
+        strategy: agentA.strategy,
+        managed: managedA,
+        startingCapitalUsd: capitalA,
+        usdcBalance: capitalA,
+        ethBalance: 0,
+        tradeCount: 0,
+      },
+      b: {
+        agentId: agentB.id,
+        name: agentB.name,
+        strategy: agentB.strategy,
+        managed: managedB,
+        startingCapitalUsd: capitalB,
+        usdcBalance: capitalB,
+        ethBalance: 0,
+        tradeCount: 0,
+      },
     });
 
     this.priceHistories.set(id, [initialPrice]);
@@ -114,13 +136,34 @@ export class RealMatchService implements MatchService {
     this.zeroGMemory?.recordMatchStarted({
       matchId: id,
       tokenPair: input.tokenPair,
-      startingCapitalUsd: capital,
+      startingCapitalUsd: aggregateCapitalUsd,
+      startingCapitalUsdA: capitalA,
+      startingCapitalUsdB: capitalB,
       durationSeconds: duration,
       contenderA: { agentId: agentA.id, name: agentA.name, strategy: agentA.strategy },
       contenderB: { agentId: agentB.id, name: agentB.name, strategy: agentB.strategy },
     });
 
     return match;
+  }
+
+  private resolveStartingCapitals(input: MatchCreateRequest): { capitalA: number; capitalB: number } {
+    const hasA = input.startingCapitalUsdA !== undefined;
+    const hasB = input.startingCapitalUsdB !== undefined;
+    if (hasA !== hasB) {
+      throw new Error("startingCapitalUsdA and startingCapitalUsdB must both be provided or both omitted.");
+    }
+    if (hasA && hasB) {
+      if (input.startingCapitalUsdA! < 1 || input.startingCapitalUsdB! < 1) {
+        throw new Error("Per-agent starting capital must be at least 1 USD.");
+      }
+      return { capitalA: input.startingCapitalUsdA!, capitalB: input.startingCapitalUsdB! };
+    }
+    const shared = input.startingCapitalUsd ?? this.config.trading.defaultPerAgentStartingCapitalUsd;
+    if (shared < 1) {
+      throw new Error("startingCapitalUsd must be at least 1 USD.");
+    }
+    return { capitalA: shared, capitalB: shared };
   }
 
   getMatch(id: string): MatchState | undefined {
@@ -284,6 +327,9 @@ export class RealMatchService implements MatchService {
     totalTicks: number,
   ): Promise<StrategySignal> {
     const contenderState = match.contenders[side];
+    const maxTradeUsd = clampMaxTradeUsd(contender.startingCapitalUsd, {
+      maxTradeUsdAbsolute: this.config.trading.maxTradeUsdAbsolute,
+    });
     const ctx: TickContext = {
       tokenPair: match.tokenPair,
       ethPrice: currentPrice,
@@ -295,6 +341,8 @@ export class RealMatchService implements MatchService {
       tradeCount: contender.tradeCount,
       tickNumber,
       ticksRemaining: Math.max(0, totalTicks - tickNumber),
+      minTradeUsd: this.config.trading.minTradeUsd,
+      maxTradeUsd,
     };
 
     let signal: StrategySignal;
@@ -340,7 +388,9 @@ export class RealMatchService implements MatchService {
     const [base, quote] = match.tokenPair.split("/");
     const baseToken = base ?? "WETH";
     const quoteToken = quote ?? "USDC";
-    const maxTradeUsd = match.startingCapitalUsd * 0.5;
+    const maxTradeUsd = clampMaxTradeUsd(contender.startingCapitalUsd, {
+      maxTradeUsdAbsolute: this.config.trading.maxTradeUsdAbsolute,
+    });
 
     const handled = await this.tryApplyDecisionWithUniswapQuotes(
       matchId,
@@ -404,10 +454,11 @@ export class RealMatchService implements MatchService {
     quoteToken: string,
     maxTradeUsd: number,
   ): Promise<boolean> {
+    const minTradeUsd = this.config.trading.minTradeUsd;
     try {
       if (signal.action === "buy") {
         let amountUsd = Math.min(signal.amount, contender.usdcBalance, maxTradeUsd);
-        if (amountUsd < 10) return true;
+        if (amountUsd < minTradeUsd) return true;
 
         const quoteDecimals = tokenDecimals(quoteToken);
         const amountInBaseUnits = (BigInt(Math.round(amountUsd * 10 ** quoteDecimals))).toString();
@@ -472,7 +523,7 @@ export class RealMatchService implements MatchService {
 
       if (signal.action === "sell") {
         let amountBase = Math.min(signal.amount, contender.ethBalance);
-        if (amountBase < 10 / currentPrice) return true;
+        if (amountBase < minTradeUsd / currentPrice) return true;
 
         let amountUsd = amountBase * currentPrice;
         if (amountUsd > maxTradeUsd) {
@@ -559,9 +610,10 @@ export class RealMatchService implements MatchService {
     quoteToken: string,
     maxTradeUsd: number,
   ): void {
+    const minTradeUsd = this.config.trading.minTradeUsd;
     if (signal.action === "buy") {
       let amountUsd = Math.min(signal.amount, contender.usdcBalance, maxTradeUsd);
-      if (amountUsd < 10) return;
+      if (amountUsd < minTradeUsd) return;
 
       const ethBought = amountUsd / currentPrice;
       contender.usdcBalance -= amountUsd;
@@ -592,7 +644,7 @@ export class RealMatchService implements MatchService {
 
     if (signal.action === "sell") {
       let amountEth = Math.min(signal.amount, contender.ethBalance);
-      if (amountEth < 10 / currentPrice) return;
+      if (amountEth < minTradeUsd / currentPrice) return;
 
       const amountUsd = amountEth * currentPrice;
       if (amountUsd > maxTradeUsd) {
@@ -630,8 +682,8 @@ export class RealMatchService implements MatchService {
     const price = match.ethPrice;
     match.contenders.A.portfolioUsd = Number((pair.a.usdcBalance + pair.a.ethBalance * price).toFixed(2));
     match.contenders.B.portfolioUsd = Number((pair.b.usdcBalance + pair.b.ethBalance * price).toFixed(2));
-    match.contenders.A.pnlPct = Number(((match.contenders.A.portfolioUsd / match.startingCapitalUsd - 1) * 100).toFixed(2));
-    match.contenders.B.pnlPct = Number(((match.contenders.B.portfolioUsd / match.startingCapitalUsd - 1) * 100).toFixed(2));
+    match.contenders.A.pnlPct = pnlPctFromPortfolio(match.contenders.A.portfolioUsd, match.contenders.A.startingCapitalUsd);
+    match.contenders.B.pnlPct = pnlPctFromPortfolio(match.contenders.B.portfolioUsd, match.contenders.B.startingCapitalUsd);
   }
 
   private async fetchPrice(fallbackPrice: number, tokenPair: string): Promise<number> {

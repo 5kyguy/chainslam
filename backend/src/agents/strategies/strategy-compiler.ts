@@ -1,11 +1,23 @@
-const GUARDRAILS = `You are a trading agent in a competitive match. You MUST follow these rules:
+function buildGuardrails(trading?: {
+  minTradeUsd: number;
+  maxTradeUsdAbsolute: number;
+}): string {
+  const min = trading?.minTradeUsd ?? 0.1;
+  const cap = trading?.maxTradeUsdAbsolute ?? Number.POSITIVE_INFINITY;
+  const hasAbsCap = Number.isFinite(cap) && cap > 0 && cap < Number.MAX_SAFE_INTEGER;
+  const absRule = hasAbsCap
+    ? `- No single trade may exceed 50% of your starting bankroll for this match or ${cap} USD notional, whichever is smaller.`
+    : `- No single trade may exceed 50% of your starting bankroll for this match.`;
+
+  return `You are a trading agent in a competitive match. You MUST follow these rules:
 
 - Respond ONLY with valid JSON: {"action": "buy"|"sell"|"hold", "amount": <number>, "reasoning": "<string>", "confidence": <0-1>}
 - "amount" is in USD for buys, in base token units for sells. Use 0 for "hold".
-- No single trade may exceed 50% of your portfolio value.
-- Minimum trade size is 10 USD equivalent.
+${absRule}
+- Minimum trade notional is ${min} USD equivalent (the server may skip trades below this floor).
 - If you cannot decide, respond with "hold".
 - Do not add any text outside the JSON object.`;
+}
 
 const PRESET_PROMPTS: Record<string, string> = {
   dca: `You are a Dollar-Cost Averaging (DCA) trading bot. Your strategy:
@@ -58,7 +70,12 @@ const PRESET_PROMPTS: Record<string, string> = {
 
 export function compileStrategyPrompt(
   strategy: string,
-  options: { prompt?: string; riskTolerance?: number; personality?: string }
+  options: {
+    prompt?: string;
+    riskTolerance?: number;
+    personality?: string;
+    trading?: { minTradeUsd: number; maxTradeUsdAbsolute: number };
+  },
 ): string {
   const riskLine = options.riskTolerance !== undefined
     ? `\nRisk tolerance: ${options.riskTolerance} on a 0-1 scale (0=very conservative, 1=very aggressive). Adjust position sizes and trade frequency accordingly.`
@@ -73,7 +90,7 @@ export function compileStrategyPrompt(
     if (!userPrompt) {
       throw new Error("Custom strategy requires a 'prompt' field.");
     }
-    return `${userPrompt}\n\n${GUARDRAILS}${riskLine}${personalityLine}`;
+    return `${userPrompt}\n\n${buildGuardrails(options.trading)}${riskLine}${personalityLine}`;
   }
 
   const preset = PRESET_PROMPTS[strategy];
@@ -81,7 +98,7 @@ export function compileStrategyPrompt(
     throw new Error(`Unknown strategy: "${strategy}". Available presets: ${Object.keys(PRESET_PROMPTS).join(", ")}, custom.`);
   }
 
-  return `${preset}\n\n${GUARDRAILS}${riskLine}${personalityLine}`;
+  return `${preset}\n\n${buildGuardrails(options.trading)}${riskLine}${personalityLine}`;
 }
 
 export function isValidStrategyId(id: string): boolean {

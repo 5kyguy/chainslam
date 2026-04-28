@@ -23,6 +23,10 @@ export class AgentService {
       prompt: input.prompt,
       riskTolerance: input.riskTolerance,
       personality: input.personality,
+      trading: {
+        minTradeUsd: this.config.trading.minTradeUsd,
+        maxTradeUsdAbsolute: this.config.trading.maxTradeUsdAbsolute,
+      },
     });
 
     return this.registry.create(input, compiledPrompt);

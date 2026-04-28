@@ -33,6 +33,11 @@ function minimalConfig(): AppConfig {
       pollIntervalMs: 0,
       maxPollAttempts: 0,
     },
+    trading: {
+      minTradeUsd: 0.1,
+      maxTradeUsdAbsolute: Number.POSITIVE_INFINITY,
+      defaultPerAgentStartingCapitalUsd: 1000,
+    },
     zerog: {
       enabled: true,
       evmRpc: "",

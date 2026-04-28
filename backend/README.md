@@ -78,6 +78,18 @@ Copy `.env.example` to **`backend/.env`** and adjust. On startup, the server loa
 
 **Supported pair symbols** (mainnet addresses in code): `WETH`, `USDC`, `USDT`, `DAI`, `WBTC`, `UNI`, `LINK`, plus raw `0x…` addresses.
 
+### Match trading policy (sizing & micro-capital tests)
+
+Per-trade limits apply in `RealMatchService`: **min notional**, **50% of each contender’s starting bankroll**, and an optional **absolute USD cap**.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `MIN_TRADE_USD` | `0.1` | Buys/sells below this USD notional are skipped. |
+| `MAX_TRADE_USD_ABSOLUTE` | (empty) | When set, caps each trade’s USD notional after the %-of-bankroll clamp (e.g. `1` for `$1` bankroll smoke tests). Empty = no extra cap. |
+| `DEFAULT_PER_AGENT_STARTING_CAPITAL_USD` | `1000` | Used when `POST /api/matches` omits `startingCapitalUsd` / per-agent fields. |
+
+**API:** `startingCapitalUsd` (minimum **1**) sets each contender’s bankroll when used alone. Optionally set **`startingCapitalUsdA`** and **`startingCapitalUsdB`** together for different bankrolls per agent.
+
 ### KeeperHub (Direct Execution — optional)
 
 When **`KEEPERHUB_API_KEY`** is set and **`UNISWAP_SWAP_MODE=live`**, each trade with a successful **`POST /swap`** payload will also be submitted to KeeperHub **`POST /execute/contract-call`**. The backend decodes Universal Router `execute(bytes,bytes[],uint256)` / `execute(bytes,bytes[])` calldata with `viem`, forwards it as a structured contract call (same intent as the unsigned tx), and records **`keeperhubSubmissionId`**, status, retries, explorer link, and receipts on `trade_executed`. A background poller calls **`GET /execute/{executionId}/status`** until the execution completes or fails, then persists **`onChainTxHash`** / **`txHash`** when KeeperHub reports a mined transaction.
@@ -92,6 +104,12 @@ When **`KEEPERHUB_API_KEY`** is set and **`UNISWAP_SWAP_MODE=live`**, each trade
 | `KEEPERHUB_MAX_POLL_ATTEMPTS` | `120` | Max completed status polls while execution stays non-terminal |
 
 If submission fails (decode error, HTTP error, wallet not configured on KeeperHub, etc.), the trade row still exists and **`lastExecutionError`** is set so the arena keeps running.
+
+**Safe rollout (e.g. `$1` per agent):**
+
+1. Run with `UNISWAP_SWAP_MODE=mock`, `MIN_TRADE_USD=0.1`, `MAX_TRADE_USD_ABSOLUTE=1`, and create a match with `startingCapitalUsd: 1` (or `startingCapitalUsdA` / `startingCapitalUsdB`). Confirm logs and trade sizes before spending gas.
+2. Fund the Uniswap swapper / KeeperHub execution wallet with **minimal** test balances and narrow token approvals.
+3. Set `UNISWAP_SWAP_MODE=live` and `KEEPERHUB_API_KEY` only after step 1 looks correct; run one short match as a canary and verify chain receipts / `onChainTxHash`.
 
 ### 0G Storage — agent/match memory (Phase 7C, optional)
 
@@ -135,9 +153,9 @@ The match service always spawns Python agent processes:
 5. The backend applies trades, tracks portfolios, and streams updates to the UI.
 6. When the match ends, the backend sends `match_end` to both agents and kills the processes.
 
-Portfolio balances are always **paper** (no on-chain swap broadcast). Fill sizes follow **live Uniswap quotes** and **approval checks**; on quote errors, fills fall back to the spot price from the tick. If price fetch fails, the service reuses the previous tick price. The backend owns portfolio state — agents only evaluate and decide.
+Portfolio balances are **paper** in the backend unless you run **`UNISWAP_SWAP_MODE=live`** (unsigned swap calldata) and optionally **KeeperHub** to submit execution — in that case real trades can occur while the server still tracks paper balances for PnL. Fill sizes follow **live Uniswap quotes** and **approval checks**; on quote errors, fills fall back to the spot price from the tick. If price fetch fails, the service reuses the previous tick price. The backend owns portfolio state — agents only evaluate and decide.
 
-**Demo (real quotes, no capital):** `UNISWAP_API_KEY=…`, `UNISWAP_SWAP_MODE=mock`.
+**Demo (real quotes, no swap broadcast):** `UNISWAP_API_KEY=…`, `UNISWAP_SWAP_MODE=mock`.
 
 ### Python Agent Strategies
 
@@ -149,6 +167,8 @@ Portfolio balances are always **paper** (no on-chain swap broadcast). Fill sizes
 | `fear_greed` | Fear and Greed | Buys sharp drops, sells sharp rallies | Medium-High |
 | `grid` | Grid Trader | Trades around predefined price bands | Low-Medium |
 | `random` | Random Walk | Random trades as a control baseline | Chaos |
+
+Each tick WebSocket message includes **`minTradeUsd`** and **`maxTradeUsd`** (aligned with `MIN_TRADE_USD` and the server’s per-trade clamp). Python strategies use these instead of legacy hardcoded **$10** floors so micro-capital matches (e.g. `$1` bankrolls) still produce buys/sells when random/stochastic paths fire.
 
 All strategies are purely algorithmic (no LLM dependency) for speed and reliability.
 
@@ -375,7 +395,7 @@ Customize strategies and parameters:
 npm run tui -- --strategy-a=momentum --strategy-b=fear_greed --duration=60 --capital=500 --pair=WETH/USDC
 ```
 
-Flags: `--base-url`, `--strategy-a`, `--strategy-b`, `--duration`, `--capital`, `--pair`
+Flags: `--base-url`, `--strategy-a`, `--strategy-b`, `--duration`, `--capital`, `--pair`. Per-contest starting USD: **`--capital` overrides**; if you omit it, the TUI loads `backend/.env` and uses **`DEFAULT_PER_AGENT_STARTING_CAPITAL_USD`** (then falls back to **1000**). The TUI always sends `startingCapitalUsd` in the match request, so that env var only applies when you do not pass `--capital`—it does not override an explicit `--capital=1000`.
 
 Controls: `q` to quit, `↑/↓` to scroll feed.
 

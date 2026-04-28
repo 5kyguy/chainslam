@@ -1,3 +1,4 @@
+import "../src/load-env.js";
 import blessed from "blessed";
 import WebSocket from "ws";
 
@@ -5,7 +6,13 @@ const BASE_URL = process.argv.find((a) => a.startsWith("--base-url="))?.split("=
 const STRATEGY_A = process.argv.find((a) => a.startsWith("--strategy-a="))?.split("=")[1] ?? "momentum";
 const STRATEGY_B = process.argv.find((a) => a.startsWith("--strategy-b="))?.split("=")[1] ?? "mean_reverter";
 const DURATION = parseInt(process.argv.find((a) => a.startsWith("--duration="))?.split("=")[1] ?? "120", 10);
-const CAPITAL = parseInt(process.argv.find((a) => a.startsWith("--capital="))?.split("=")[1] ?? "1000", 10);
+/** `--capital=` wins; else `DEFAULT_PER_AGENT_STARTING_CAPITAL_USD` from `backend/.env`; else 1000 (matches API default). */
+const CAPITAL = parseInt(
+  process.argv.find((a) => a.startsWith("--capital="))?.split("=")[1]
+    ?? process.env.DEFAULT_PER_AGENT_STARTING_CAPITAL_USD
+    ?? "1000",
+  10,
+);
 const TOKEN_PAIR = process.argv.find((a) => a.startsWith("--pair="))?.split("=")[1] ?? "WETH/USDC";
 
 const STRATEGY_NAMES: Record<string, string> = {

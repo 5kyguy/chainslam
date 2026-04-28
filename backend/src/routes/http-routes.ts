@@ -15,8 +15,10 @@ export async function registerHttpRoutes(app: FastifyInstance): Promise<void> {
       agentA: body.agentA,
       agentB: body.agentB,
       tokenPair: body.tokenPair,
-      startingCapitalUsd: body.startingCapitalUsd ?? 1000,
-      durationSeconds: body.durationSeconds ?? 300
+      startingCapitalUsd: body.startingCapitalUsd,
+      startingCapitalUsdA: body.startingCapitalUsdA,
+      startingCapitalUsdB: body.startingCapitalUsdB,
+      durationSeconds: body.durationSeconds ?? 300,
     });
     return reply.code(201).send(created);
   });
