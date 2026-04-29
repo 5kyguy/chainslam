@@ -25,6 +25,7 @@ See [backend/README.md](backend/README.md) for full setup details.
 
 - [Project overview](docs/overview.md)
 - [Architecture](docs/architecture.md)
+- [KeeperHub integration](docs/keeperhub-integration.md)
 - [Technical spec](docs/technical-spec.md)
 - [Match types](docs/match-types.md)
 - [Ranking system](docs/ranking-system.md)

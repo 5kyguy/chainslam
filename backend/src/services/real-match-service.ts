@@ -10,12 +10,13 @@ import {
   type UniswapClient,
   type UniswapQuoteResponse,
 } from "../integrations/uniswap.js";
-import type { KeeperHubClient } from "../integrations/keeperhub.js";
+import { normalizeKeeperHubStatus, type KeeperHubClient } from "../integrations/keeperhub.js";
 import { KeeperHubExecutionPoller } from "./keeperhub-execution-poller.js";
 import { fromBaseUnits, tokenDecimals, toBaseUnits } from "../integrations/tokens.js";
 import type {
   ContenderState,
   DecisionEvent,
+  KeeperHubExecutionAudit,
   MatchCreateRequest,
   MatchState,
   StrategySignal,
@@ -174,6 +175,31 @@ export class RealMatchService implements MatchService {
     return this.store.getTrades(id);
   }
 
+  getKeeperHubExecutions(id: string): KeeperHubExecutionAudit[] {
+    return this.store.getTrades(id)
+      .filter((trade) =>
+        trade.executionMode === "uniswap_live_swap" ||
+        trade.keeperhubSubmissionId !== undefined ||
+        trade.keeperhubStatus !== undefined ||
+        trade.lastExecutionError !== undefined,
+      )
+      .map((trade) => ({
+        tradeRecordId: trade.tradeRecordId ?? "",
+        contender: trade.contender,
+        timestamp: trade.timestamp,
+        executionMode: trade.executionMode,
+        sold: trade.sold,
+        bought: trade.bought,
+        keeperhubSubmissionId: trade.keeperhubSubmissionId,
+        keeperhubStatus: trade.keeperhubStatus,
+        keeperhubRetryCount: trade.keeperhubRetryCount,
+        onChainTxHash: trade.onChainTxHash,
+        keeperhubTransactionLink: trade.keeperhubTransactionLink,
+        lastExecutionError: trade.lastExecutionError,
+        executionReceipt: trade.executionReceipt,
+      }));
+  }
+
   getFeed(id: string): unknown[] {
     return this.store.getFeed(id);
   }
@@ -247,6 +273,8 @@ export class RealMatchService implements MatchService {
   }
 
   private startLoop(matchId: string): void {
+    const match = this.store.getMatch(matchId);
+    if (!match || match.status !== "running") return;
     this.stopLoop(matchId);
     const interval = setInterval(() => void this.tick(matchId), TICK_MS);
     this.store.setInterval(matchId, interval);
@@ -779,7 +807,7 @@ export class RealMatchService implements MatchService {
 
     this.store.updateTradeExecution(matchId, tradeRecordId, {
       keeperhubSubmissionId: submission.result.executionId,
-      keeperhubStatus: submission.result.status,
+      keeperhubStatus: normalizeKeeperHubStatus(submission.result.status),
       keeperhubRetryCount: submission.httpRetries,
       executionReceipt: execReceipt ?? { raw },
     });

@@ -1,4 +1,5 @@
 import type { KeeperHubClient } from "../integrations/keeperhub.js";
+import { isTerminalKeeperHubStatus, normalizeKeeperHubStatus } from "../integrations/keeperhub.js";
 import type { AppConfig } from "../config.js";
 import type { Store } from "../store/store.js";
 import type { TradeEvent, WsEnvelope } from "../types.js";
@@ -89,8 +90,8 @@ export class KeeperHubExecutionPoller {
     ctx.errorStreak = 0;
 
     const st = res.status;
-    const normalizedStatus = (st.status ?? "").toLowerCase();
-    const isTerminal = normalizedStatus === "completed" || normalizedStatus === "failed";
+    const normalizedStatus = normalizeKeeperHubStatus(st.status);
+    const isTerminal = isTerminalKeeperHubStatus(normalizedStatus);
 
     if (!isTerminal) {
       ctx.pollCount += 1;
@@ -133,7 +134,7 @@ export class KeeperHubExecutionPoller {
     this.store.updateTradeExecution(ctx.matchId, ctx.tradeRecordId, patch);
     this.publishTradeEnvelope(ctx.matchId, ctx.tradeRecordId);
 
-    if (normalizedStatus === "completed" || normalizedStatus === "failed") {
+    if (isTerminal) {
       this.pending.delete(executionId);
     }
   }

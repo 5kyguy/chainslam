@@ -137,6 +137,22 @@ export interface TradeEvent {
   keeperhubTransactionLink?: string;
 }
 
+export interface KeeperHubExecutionAudit {
+  tradeRecordId: string;
+  contender: string;
+  timestamp: string;
+  executionMode?: TradeEvent["executionMode"];
+  sold: TradeEvent["sold"];
+  bought: TradeEvent["bought"];
+  keeperhubSubmissionId?: string;
+  keeperhubStatus?: string;
+  keeperhubRetryCount?: number;
+  onChainTxHash?: string;
+  keeperhubTransactionLink?: string;
+  lastExecutionError?: string;
+  executionReceipt?: Record<string, unknown>;
+}
+
 export type FeedEvent = DecisionEvent | TradeEvent;
 
 export interface LeaderboardEntry {

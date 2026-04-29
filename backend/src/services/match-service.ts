@@ -1,10 +1,11 @@
-import type { MatchCreateRequest, MatchState } from "../types.js";
+import type { KeeperHubExecutionAudit, MatchCreateRequest, MatchState } from "../types.js";
 import type { MemoryPage, MemoryQuery } from "./zerog-memory-service.js";
 
 export interface MatchService {
   createMatch(input: MatchCreateRequest): MatchState;
   getMatch(id: string): MatchState | undefined;
   getTrades(id: string): unknown[];
+  getKeeperHubExecutions(id: string): KeeperHubExecutionAudit[];
   getFeed(id: string): unknown[];
   stopMatch(id: string): MatchState | undefined;
   getStrategies(): unknown[];

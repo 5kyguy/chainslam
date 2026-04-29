@@ -57,6 +57,20 @@ interface Envelope {
   payload: unknown;
 }
 
+interface TradePayload {
+  contender: string;
+  sold: { token: string; amount: number };
+  bought: { token: string; amount: number };
+  gasUsd: number;
+  executionMode?: string;
+  keeperhubSubmissionId?: string;
+  keeperhubStatus?: string;
+  keeperhubRetryCount?: number;
+  onChainTxHash?: string;
+  keeperhubTransactionLink?: string;
+  lastExecutionError?: string;
+}
+
 function pnlStr(pct: number): string {
   const sign = pct >= 0 ? "+" : "";
   const arrow = pct > 0.1 ? " ▲" : pct < -0.1 ? " ▼" : "";
@@ -337,8 +351,16 @@ async function main() {
       }
 
       if (env.event === "trade_executed") {
-        const t = env.payload as { contender: string; sold: { token: string; amount: number }; bought: { token: string; amount: number }; gasUsd: number };
+        const t = env.payload as TradePayload;
         log(`  {cyan-fg}TRADE{/} ${t.contender}: ${t.sold.amount.toFixed(2)} ${t.sold.token} → ${t.bought.amount.toFixed(6)} ${t.bought.token} (gas: $${t.gasUsd})`);
+        if (t.executionMode === "uniswap_live_swap" || t.keeperhubSubmissionId || t.keeperhubStatus || t.lastExecutionError) {
+          const status = t.keeperhubStatus ?? (t.keeperhubSubmissionId ? "submitted" : "not-submitted");
+          const retries = t.keeperhubRetryCount !== undefined ? ` retries=${t.keeperhubRetryCount}` : "";
+          log(`  {green-fg}KeeperHub{/} ${status}${t.keeperhubSubmissionId ? ` id=${t.keeperhubSubmissionId}` : ""}${retries}`);
+          if (t.onChainTxHash) log(`  {green-fg}Onchain{/} ${t.onChainTxHash}`);
+          if (t.keeperhubTransactionLink) log(`  {blue-fg}${t.keeperhubTransactionLink}{/}`);
+          if (t.lastExecutionError) log(`  {red-fg}${t.lastExecutionError}{/}`);
+        }
       }
 
       if (env.event === "completed") {

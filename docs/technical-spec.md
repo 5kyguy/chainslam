@@ -9,7 +9,8 @@ This document describes the actual implementation contracts for the Agent Slam h
 | Backend API | TypeScript / Fastify | Match orchestration, agent management, WebSocket streaming, trade execution |
 | PostgreSQL | PostgreSQL 17 (Docker) | Persistent storage for agents, matches, trades, decisions, leaderboard |
 | Python Agents | Python 3.11+ processes | Strategy evaluation (spawned per-match, communicate via WebSocket) |
-| Uniswap API | REST (optional) | Real-time price quotes for match ticks |
+| Uniswap API | REST (optional) | Real-time price quotes and optional swap calldata |
+| KeeperHub | REST (optional) | Reliable onchain execution, polling, and audit receipts |
 | UI | (frontend, separate) | Match setup, live leaderboard, decision feed, trade history |
 
 ## Project Structure
@@ -25,6 +26,7 @@ agentslam/
 │   │   ├── config.ts               # Environment configuration
 │   │   ├── integrations/
 │   │   │   ├── tokens.ts           # Token addresses and decimals
+│   │   │   ├── keeperhub.ts        # KeeperHub Direct Execution client
 │   │   │   └── uniswap.ts          # Uniswap Trading API client
 │   │   ├── routes/
 │   │   │   ├── agent-routes.ts     # REST: /api/agents
@@ -34,6 +36,7 @@ agentslam/
 │   │   ├── services/
 │   │   │   ├── agent-service.ts    # Agent CRUD and stats
 │   │   │   ├── match-service.ts    # MatchService interface
+│   │   │   ├── keeperhub-execution-poller.ts # KeeperHub status poller
 │   │   │   ├── real-match-service.ts   # Real match engine (Python agents)
 │   │   │   ├── service-factory.ts  # Creates RealMatchService
 │   │   │   └── strategy-catalog.ts # Available strategy definitions
@@ -241,7 +244,11 @@ The `/ws/matches/:id` endpoint streams events to frontend clients.
   "sold": { "token": "USDC", "amount": 150.0 },
   "bought": { "token": "ETH", "amount": 0.044 },
   "gasUsd": 1.23,
-  "timestamp": "2026-04-27T07:00:00.000Z"
+  "timestamp": "2026-04-27T07:00:00.000Z",
+  "executionMode": "uniswap_live_swap",
+  "keeperhubSubmissionId": "exec_...",
+  "keeperhubStatus": "completed",
+  "onChainTxHash": "0xabc..."
 }
 ```
 
@@ -256,6 +263,7 @@ The `/ws/matches/:id` endpoint streams events to frontend clients.
    - Backend sends `tick` context to both agents in parallel.
    - Each agent evaluates its strategy and returns a `decision`.
    - Backend applies trades (buy/sell) or skips (hold).
+   - In live mode, successful Uniswap swap calldata is submitted to KeeperHub and polled asynchronously.
    - Backend fetches latest price (Uniswap or simulated).
    - Backend recalculates portfolios and PnL.
    - Backend broadcasts `snapshot` event to UI clients.
@@ -266,10 +274,10 @@ The `/ws/matches/:id` endpoint streams events to frontend clients.
 
 | Rule | Detail |
 | --- | --- |
-| Equal capital | Both agents start with identical USDC balance |
+| Equal capital | Both agents start with identical USDC balance unless per-agent bankrolls are provided |
 | Same market | Both agents trade the same token pair |
 | Max trade size | 50% of starting capital per trade |
-| Min trade size | $10 equivalent |
+| Min trade size | Configured `MIN_TRADE_USD` |
 | Tick interval | 10 seconds |
 | Agent timeout | 8 seconds (defaults to hold) |
 | Draw threshold | 0.25% PnL difference |
@@ -295,11 +303,14 @@ LLM_API_KEY=
 LLM_MODEL=gpt-4o-mini
 LLM_BASE_URL=https://api.openai.com/v1
 
-# Uniswap (optional price feed)
+# Uniswap / KeeperHub
 UNISWAP_API_KEY=
 UNISWAP_CHAIN_ID=1
+UNISWAP_SWAP_MODE=mock
 UNISWAP_TIMEOUT_MS=15000
 UNISWAP_MAX_RETRIES=2
+KEEPERHUB_API_KEY=
+KEEPERHUB_BASE_URL=https://app.keeperhub.com/api
 ```
 
 ## Resilience Rules
@@ -308,7 +319,8 @@ UNISWAP_MAX_RETRIES=2
 | --- | --- |
 | Agent process crashes | Backend detects disconnect, defaults to hold for remaining ticks |
 | Agent evaluate timeout | 8-second timeout, defaults to hold |
-| Uniswap API error | Reuses previous tick price |
+| Uniswap API error | Reuses previous tick price or falls back to paper math for trade sizing |
+| KeeperHub submit/status error | Match continues; trade records `lastExecutionError` and retry metadata |
 | Agent not connected at tick | Returns hold signal, match continues |
 | Match stop requested | Backend kills both agent processes, releases agents to "ready" |
 

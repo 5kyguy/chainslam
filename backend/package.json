@@ -7,7 +7,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
-    "test:unit": "node --import tsx --test tests/match-outcome.test.ts tests/trading-policy.test.ts tests/zerog-memory.test.ts",
+    "test:unit": "node --import tsx --test tests/match-outcome.test.ts tests/trading-policy.test.ts tests/zerog-memory.test.ts tests/keeperhub.test.ts",
     "test:smoke": "tsx tests/smoke.ts",
     "test": "npm run test:unit && npm run test:smoke",
     "tui": "tsx tui/arena.ts"

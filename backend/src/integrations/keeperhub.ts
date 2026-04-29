@@ -61,7 +61,7 @@ function stripTrailingSlash(url: string): string {
   return url.endsWith("/") ? url.slice(0, -1) : url;
 }
 
-export function chainIdToKeeperHubNetwork(chainId: number): string {
+export function chainIdToKeeperHubNetwork(chainId: number): string | undefined {
   switch (chainId) {
     case 1:
       return "ethereum";
@@ -84,8 +84,33 @@ export function chainIdToKeeperHubNetwork(chainId: number): string {
     case 56:
       return "bsc";
     default:
-      return "ethereum";
+      return undefined;
   }
+}
+
+export function normalizeKeeperHubStatus(status: string | undefined | null): string {
+  const s = (status ?? "").trim().toLowerCase();
+  if (s === "") return "unknown";
+
+  if (["completed", "complete", "success", "succeeded", "executed", "mined"].includes(s)) {
+    return "completed";
+  }
+  if (["failed", "failure", "error", "errored", "cancelled", "canceled", "rejected", "expired", "timeout", "timed_out"].includes(s)) {
+    return "failed";
+  }
+  if (["queued", "created", "submitted", "pending"].includes(s)) {
+    return "pending";
+  }
+  if (["running", "processing", "executing", "in_progress"].includes(s)) {
+    return "running";
+  }
+
+  return s;
+}
+
+export function isTerminalKeeperHubStatus(status: string | undefined | null): boolean {
+  const normalized = normalizeKeeperHubStatus(status);
+  return normalized === "completed" || normalized === "failed";
 }
 
 /** Normalize tx `value` from Uniswap (hex wei or decimal string) to decimal wei string for KeeperHub */
@@ -179,7 +204,15 @@ export class KeeperHubClient {
       };
     }
 
-    const network = chainIdToKeeperHubNetwork(unsigned.chainId ?? chainId);
+    const effectiveChainId = unsigned.chainId ?? chainId;
+    const network = chainIdToKeeperHubNetwork(effectiveChainId);
+    if (!network) {
+      return {
+        ok: false,
+        error: `Unsupported KeeperHub network for chainId ${effectiveChainId}`,
+        httpRetries: 0,
+      };
+    }
     const valueWei = normalizeTxValueWei(unsigned.value);
 
     const body = {

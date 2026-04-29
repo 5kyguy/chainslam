@@ -29,7 +29,12 @@ Agent Slam is a Fastify (TypeScript) backend that orchestrates head-to-head matc
                                     |
                           ┌─────────┴─────────┐
                           │ Uniswap Trading API│
-                          │ (optional prices)  │
+                          │ prices + swap data │
+                          └─────────┬─────────┘
+                                    |
+                          ┌─────────┴─────────┐
+                          │ KeeperHub          │
+                          │ reliable execution │
                           └───────────────────┘
 ```
 
@@ -55,7 +60,9 @@ Key modules:
 | `RemoteAgentConnection` | `agents/remote-agent.ts` | WS-based evaluate with 8s timeout |
 | `AgentService` | `services/agent-service.ts` | Agent CRUD and stats |
 | `PostgresStore` | `store/postgres-store.ts` | Write-through persistence |
-| `UniswapClient` | `integrations/uniswap.ts` | Real price quotes (optional) |
+| `UniswapClient` | `integrations/uniswap.ts` | Real price quotes and optional swap calldata |
+| `KeeperHubClient` | `integrations/keeperhub.ts` | Direct execution submission/status client |
+| `KeeperHubExecutionPoller` | `services/keeperhub-execution-poller.ts` | Async execution status polling and receipt persistence |
 
 ## Python Agent Processes
 
@@ -111,22 +118,25 @@ class Strategy(ABC):
 
 All strategies are purely algorithmic — no LLM calls, fast and deterministic.
 
-## Uniswap Integration
+## Uniswap and KeeperHub Integration
 
-Uniswap is the market data layer. The backend fetches real prices from the Uniswap Trading API for match ticks. On API errors, it reuses the previous tick price.
+Uniswap is the market data and swap-construction layer. The backend fetches real prices from the Uniswap Trading API for match ticks. On API errors, it reuses the previous tick price.
 
 - Trading API base URL: `https://trade-api.gateway.uniswap.org/v1`
 - Uses the `/quote` endpoint for price discovery
-- No on-chain execution — paper trading only
+- Uses `/swap` in `UNISWAP_SWAP_MODE=live` to build unsigned Universal Router calldata
+- Sends live unsigned swap intent to KeeperHub when `KEEPERHUB_API_KEY` is set
+- Persists KeeperHub execution ids, statuses, retries, receipts, explorer links, and final tx hashes on trade records
+- Paper portfolio accounting remains the match source of truth so failed external execution does not break the arena
 
 ## Match Rules
 
 | Rule | Description |
 | --- | --- |
-| Equal capital | Both contenders start with the same USDC balance |
+| Equal capital | Both contenders start with the same USDC balance unless per-agent bankrolls are explicitly provided |
 | Same market | Both agents trade the same token pair |
 | Position limits | No single trade can use more than 50% of starting capital |
-| Minimum trade | Trades must be at least $10 equivalent |
+| Minimum trade | Trades must meet the configured `MIN_TRADE_USD` |
 | Transparent decisions | Every decision is broadcast before execution |
 | Timeout protection | Agents that don't respond within 8 seconds default to hold |
 | Parallel evaluation | Both agents are ticked simultaneously |
@@ -153,6 +163,7 @@ PostgreSQL 17 stores all durable state. `PostgresStore` extends `InMemoryStore` 
 | `POST` | `/api/matches` | Create a match |
 | `GET` | `/api/matches/:id` | Get match state |
 | `GET` | `/api/matches/:id/trades` | Get trade history |
+| `GET` | `/api/matches/:id/executions` | Get KeeperHub execution audit trail for live trades |
 | `GET` | `/api/matches/:id/feed` | Get decision feed |
 | `POST` | `/api/matches/:id/stop` | Stop a match |
 | `GET` | `/api/strategies` | List available strategies |

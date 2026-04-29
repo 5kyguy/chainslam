@@ -43,6 +43,18 @@ export async function registerHttpRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 
+  app.get<{ Params: { id: string } }>(
+    "/api/matches/:id/executions",
+    { schema: paramsWithIdSchema },
+    async (request, reply) => {
+      const match = app.matchService.getMatch(request.params.id);
+      if (!match) {
+        return reply.code(404).send({ message: "Match not found" });
+      }
+      return app.matchService.getKeeperHubExecutions(request.params.id);
+    },
+  );
+
   app.get<{ Params: { id: string } }>("/api/matches/:id/feed", { schema: paramsWithIdSchema }, async (request, reply) => {
     const match = app.matchService.getMatch(request.params.id);
     if (!match) {

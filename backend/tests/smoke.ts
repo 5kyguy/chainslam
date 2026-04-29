@@ -134,10 +134,11 @@ async function run() {
   const match = await fetch(`${httpBase}/api/matches/${created.id}`).then((r) => r.json());
   const feed = await fetch(`${httpBase}/api/matches/${created.id}/feed`).then((r) => r.json());
   const trades = await fetch(`${httpBase}/api/matches/${created.id}/trades`).then((r) => r.json());
+  const executions = await fetch(`${httpBase}/api/matches/${created.id}/executions`).then((r) => r.json());
   await fetch(`${httpBase}/api/matches/${created.id}/stop`, { method: "POST" }).then((r) => r.json());
   const leaderboard = await fetch(`${httpBase}/api/leaderboard`).then((r) => r.json());
 
-  if (!match?.id || !Array.isArray(feed) || !Array.isArray(trades) || !Array.isArray(leaderboard)) {
+  if (!match?.id || !Array.isArray(feed) || !Array.isArray(trades) || !Array.isArray(executions) || !Array.isArray(leaderboard)) {
     throw new Error("One or more contract endpoints failed");
   }
   if (!wsEvents.includes("snapshot")) {

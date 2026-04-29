@@ -13,6 +13,7 @@ A successful demo shows:
 - WebSocket communication between backend and agents
 - Live strategy reasoning visible in the decision feed
 - Real or simulated market prices driving match ticks
+- Optional KeeperHub execution status for live Uniswap swaps
 - A final winner based on transparent portfolio valuation
 
 ## Setup Before The Demo
@@ -32,7 +33,7 @@ cp backend/.env.example backend/.env
 cd backend && npm run dev
 ```
 
-Set `UNISWAP_API_KEY=...` to enable Uniswap Trading API price feeds.
+Set `UNISWAP_API_KEY=...` to enable Uniswap Trading API price feeds. For the KeeperHub prize demo, run a mock match first, then set `UNISWAP_SWAP_MODE=live`, `KEEPERHUB_API_KEY=...`, and a very low `MAX_TRADE_USD_ABSOLUTE` for one canary execution.
 
 ## What The Audience Should Understand
 
@@ -67,7 +68,7 @@ This creates a clean narrative because momentum and mean reversion typically rea
 | `0:40` | Explain that the backend just spawned two Python processes, each running a different strategy |
 | `1:00` | Highlight the decision feed and explain that each agent publishes plain-language reasoning |
 | `1:30` | Show at least one trade flowing through and appearing in the trade history with PnL impact |
-| `2:00` | Focus on the live leaderboard as the strategies diverge in PnL |
+| `2:00` | For KeeperHub mode, show the execution id/status/tx hash or explorer link attached to the trade |
 | `2:40` | Let the match end and show the winner screen with final portfolio values and match stats |
 | `3:00` | Invite the judge or viewer to choose a different pair of strategies and run another match |
 
@@ -80,6 +81,7 @@ The fastest ways to lose clarity in the demo are:
 - Slow or unreliable market/execution updates
 - No visible explanation for why an agent traded
 - No obvious final winner state
+- Live execution failing without a clear fallback story; keep `UNISWAP_SWAP_MODE=mock` ready and show the recorded KeeperHub run if needed
 
 The demo should bias toward simplicity and observability over ambitious market complexity.
 
@@ -92,3 +94,4 @@ If the core loop is already stable, the following additions can make the demo st
 - Volatility Duel or Altcoin Duel presets
 - A quick rematch flow with different strategies
 - Real Uniswap price feeds for live market data
+- KeeperHub audit page or execution timeline for every live trade

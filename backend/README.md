@@ -200,6 +200,7 @@ The schema is created automatically on first startup via `PostgresStore.init()`.
 | `POST /api/matches` | Create a new match and start its lifecycle loop | Called from "Start Match" action |
 | `GET /api/matches/:id` | Return current match snapshot (status, PnL, time remaining, contenders) | Poll or refresh current match state view |
 | `GET /api/matches/:id/trades` | Return executed trade history for the match | Populate trade history panel/table |
+| `GET /api/matches/:id/executions` | Return KeeperHub execution audit projection for live trades | Judge/demo audit view |
 | `GET /api/matches/:id/feed` | Return decision feed events (buy/sell/hold reasoning) | Populate live decision feed list |
 | `GET /api/matches/:id/memory` | Paginated Phase 7C memory timeline (`limit`, `cursor`) — empty `events` if `ZEROG_ENABLED=false` | Replay / audit UI |
 | `GET /api/matches/:id/memory/zg` | Raw snapshot string from 0G KV when configured (`configured`, `raw`) | Proof / bounty evidence |
@@ -230,7 +231,7 @@ Notes:
 
 - `snapshot` payload is the full current match state.
 - `decision` payload represents contender intent and reasoning.
-- `trade_executed` payload represents simulated execution result. When Uniswap-sized fills are used, optional fields include `tradeRecordId`, `executionMode` (`uniswap_quote_mock` | `uniswap_live_swap` | `paper`), `quoteRouting`, `mockSwapBuild`, `unsignedSwap` (from real `POST /swap` when `UNISWAP_SWAP_MODE=live`), `swapRequestId`, `swapError`, `approvalRequestId`. With **`KEEPERHUB_API_KEY`** and live swap, optional **`keeperhubSubmissionId`**, **`keeperhubStatus`**, **`keeperhubRetryCount`**, **`onChainTxHash`**, **`executionReceipt`**, **`lastExecutionError`**, **`keeperhubTransactionLink`** appear as submission and polling progress.
+- `trade_executed` payload represents paper portfolio accounting plus optional external execution metadata. When Uniswap-sized fills are used, optional fields include `tradeRecordId`, `executionMode` (`uniswap_quote_mock` | `uniswap_live_swap` | `paper`), `quoteRouting`, `mockSwapBuild`, `unsignedSwap` (from real `POST /swap` when `UNISWAP_SWAP_MODE=live`), `swapRequestId`, `swapError`, `approvalRequestId`. With **`KEEPERHUB_API_KEY`** and live swap, optional **`keeperhubSubmissionId`**, **`keeperhubStatus`**, **`keeperhubRetryCount`**, **`onChainTxHash`**, **`executionReceipt`**, **`lastExecutionError`**, **`keeperhubTransactionLink`** appear as submission and polling progress.
 - `completed` and `stopped` are terminal lifecycle events.
 
 Decision event payload:

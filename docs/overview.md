@@ -69,9 +69,9 @@ All strategies are purely algorithmic — no LLM dependency — for speed, relia
 6. The backend tracks every decision, trade, portfolio value, and PnL update.
 7. When the match ends, the backend kills the agent processes, declares the winner, and updates ratings.
 
-## Price Feeds
+## Price Feeds and Execution
 
-Prices are sourced from the Uniswap Trading API (`/quote`) using your configured API key. On-chain execution is not yet implemented — all trading is paper-based.
+Prices are sourced from the Uniswap Trading API (`/quote`) using your configured API key. By default the arena uses paper accounting with real quote sizing. In live mode, Uniswap `/swap` builds unsigned Universal Router calldata and KeeperHub submits/polls the execution, giving each agent trade an auditable execution trail.
 
 ## Why It Works
 
