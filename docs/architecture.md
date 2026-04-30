@@ -212,6 +212,7 @@ PostgreSQL 17 stores all durable state. `PostgresStore` extends `InMemoryStore` 
 | `DELETE` | `/api/agents/:id` | Delete an agent |
 | `GET` | `/api/agents/:id/memory` | Agent-scoped paginated memory timeline |
 | `POST` | `/api/matches` | Create a match |
+| `GET` | `/api/matches` | List matches (filterable by status, paginated) |
 | `GET` | `/api/matches/:id` | Get match state |
 | `GET` | `/api/matches/:id/trades` | Get trade history |
 | `GET` | `/api/matches/:id/executions` | Get KeeperHub execution audit trail for live trades |
@@ -226,17 +227,29 @@ PostgreSQL 17 stores all durable state. `PostgresStore` extends `InMemoryStore` 
 
 | Endpoint | Purpose |
 | --- | --- |
+| `WS /ws/matches` | Global stream of all match events (for wall/arena views) |
 | `WS /ws/matches/:id` | Stream live match updates to UI clients (snapshot + incremental events) |
 | `WS /ws/agent/:agentId` | Agent communication channel (tick → decision, internal only) |
 
 ## Terminal UI (TUI)
 
-A blessed-based terminal arena UI (`tui/arena.ts`) provides:
+A blessed-based terminal arena UI (`tui/arena.ts`) provides a multi-screen flow:
 
-- Strategy selector overlay (pick two strategies before the match)
-- Live dashboard with contender panels (portfolio, PnL%, trades, visual bars)
-- Scrollable live feed (color-coded decisions and trades)
-- Match completion display with winner announcement
-- KeeperHub execution status in trade events
+1. **Main Menu** — New Match / Leaderboard / Quit
+2. **Strategy Selection** — Pick two agents from the strategy catalog
+3. **Match Configuration** — Interactive form: token pair (fixed list), duration (presets), capital (input)
+4. **Review & Confirm** — Summary of config before starting
+5. **Live Match** — Contender panels, live feed, KeeperHub status
+6. **Post-Match** — Winner announcement, options to start a new match or view leaderboard
+7. **Leaderboard** — Ranked table of agents/strategies
 
-Run with `npm run tui`. Flags: `--strategy-a`, `--strategy-b`, `--duration`, `--capital`, `--pair`.
+Run with `npm run tui`. Flags: `--base-url`, `--strategy-a`, `--strategy-b`, `--duration`, `--capital`, `--pair`.
+
+## Planned: Leaderboard Strategy Aggregation
+
+When "Bring Your Own Agent" is enabled, the leaderboard should support grouping by strategy across multiple agents:
+
+- `GET /api/leaderboard?groupBy=strategy` — Aggregate stats by strategy ID
+- `Store.getLeaderboardByStrategy()` — SQL `GROUP BY strategy` in PostgresStore
+- Fields: composite rating (average of agent ratings), total wins/losses/draws, average PnL%, total matches
+- The existing `LeaderboardEntry` type gains an optional `strategyId` field for BYOA context

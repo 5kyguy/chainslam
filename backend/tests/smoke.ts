@@ -132,6 +132,25 @@ async function run() {
   }
 
   const match = await fetch(`${httpBase}/api/matches/${created.id}`).then((r) => r.json());
+
+  const matchListAll = await fetch(`${httpBase}/api/matches`).then((r) => r.json());
+  if (!Array.isArray(matchListAll) || matchListAll.length < 1) {
+    throw new Error("GET /api/matches returned empty");
+  }
+
+  const matchListRunning = await fetch(`${httpBase}/api/matches?status=running`).then((r) => r.json());
+  if (!Array.isArray(matchListRunning)) {
+    throw new Error("GET /api/matches?status=running did not return array");
+  }
+
+  const globalWsEvents: string[] = [];
+  const globalWs = new WebSocket(`${wsBase}/ws/matches`);
+  globalWs.addEventListener("message", (event) => {
+    const payload = JSON.parse(String(event.data));
+    globalWsEvents.push(payload.event);
+  });
+  await sleep(200);
+
   const feed = await fetch(`${httpBase}/api/matches/${created.id}/feed`).then((r) => r.json());
   const trades = await fetch(`${httpBase}/api/matches/${created.id}/trades`).then((r) => r.json());
   const executions = await fetch(`${httpBase}/api/matches/${created.id}/executions`).then((r) => r.json());
@@ -145,7 +164,12 @@ async function run() {
     throw new Error("WS stream did not emit snapshot");
   }
 
+  if (!globalWsEvents.includes("snapshot")) {
+    throw new Error("Global WS stream did not emit snapshot");
+  }
+
   ws.close();
+  globalWs.close();
   await app.close();
   console.log("Smoke test passed");
 }

@@ -471,10 +471,20 @@ npm test
 
 ## Terminal UI
 
+The TUI is a multi-screen blessed application with the following flow:
+
+1. **Main Menu** — New Match / Leaderboard / Quit
+2. **Strategy Selection** — Side-by-side pickers for Agent A and Agent B
+3. **Match Configuration** — Interactive form: token pair, duration, starting capital
+4. **Review & Confirm** — Summary before match start
+5. **Live Match** — Dashboard with contender panels, live feed, header bar
+6. **Post-Match** — Winner display, options to start a new match or view leaderboard
+7. **Leaderboard** — Ranked table fetched from `/api/leaderboard`
+
 ```bash
 npm run tui
 npm run tui -- --strategy-a=momentum --strategy-b=fear_greed --duration=60 --capital=500 --pair=WETH/USDC
 ```
 
 Flags: `--base-url`, `--strategy-a`, `--strategy-b`, `--duration`, `--capital`, `--pair`.
-Controls: `q` to quit, `↑/↓` to scroll feed.
+Controls: `↑/↓` to scroll feed, `tab` to switch fields, `enter` to confirm, `esc` to go back.
