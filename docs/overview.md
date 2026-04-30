@@ -33,18 +33,19 @@ Each Contender is a Python process running a single strategy. The backend spawns
 
 Contenders compete independently. They do not coordinate with each other, and they operate under the same market and execution constraints.
 
-### The UI
+### Terminal UI (TUI)
 
-The product should feel like watching a live fight between strategies, not a black-box trading bot.
+The terminal arena UI (`npm run tui`) provides a live fight experience:
 
 | Component | What it shows |
 | --- | --- |
-| Live leaderboard | Real-time PnL and current standing |
-| Decision feed | Each agent's reasoning in plain English |
-| Trade history | Every trade with time, size, direction, and gas cost |
 | Strategy selector | Pick the two strategies before the match starts |
-| Match timer | Countdown to the end of the round |
-| Winner screen | Final result, match stats, and post-match summary |
+| Contender panels | Side-by-side portfolio value, PnL%, trade count, visual progress bars |
+| Live feed | Each agent's decisions and trades with color-coded reasoning |
+| Match header | Token pair, ETH price, timer countdown, match status |
+| Winner display | Final result with match stats when the clock runs out |
+
+The TUI connects to the backend over WebSocket and renders in the terminal using blessed. It supports CLI flags for strategies, duration, capital, and pair.
 
 ## Built-In Strategies
 
@@ -67,11 +68,15 @@ All strategies are purely algorithmic — no LLM dependency — for speed, relia
 4. Both agents connect via WebSocket and the tick loop begins.
 5. On each tick (every 10 seconds), both agents evaluate the market and decide whether to trade.
 6. The backend tracks every decision, trade, portfolio value, and PnL update.
-7. When the match ends, the backend kills the agent processes, declares the winner, and updates ratings.
+7. When the match ends, the backend kills the agent processes, determines the winner, and updates ratings.
 
 ## Price Feeds and Execution
 
-Prices are sourced from the Uniswap Trading API (`/quote`) using your configured API key. By default the arena uses paper accounting with real quote sizing. In live mode, Uniswap `/swap` builds unsigned Universal Router calldata and KeeperHub submits/polls the execution, giving each agent trade an auditable execution trail.
+Prices are sourced from the Uniswap Trading API (`POST /quote`) using a configured API key. By default the arena uses Uniswap-sized paper accounting with real quote sizing. In live mode, `POST /swap` builds unsigned Universal Router calldata and KeeperHub submits/polls the execution, giving each agent trade an auditable execution trail.
+
+## Match Memory (0G Storage)
+
+Match events (decisions, trades, lifecycle) are recorded in an in-process memory timeline by default. When 0G Storage credentials are configured, snapshots are flushed to 0G KV for persistent, onchain-verifiable match history. The memory API (`GET /api/matches/:id/memory`) exposes paginated event retrieval.
 
 ## Why It Works
 
@@ -81,3 +86,5 @@ Agent Slam is compelling because it turns strategy behavior into a spectator exp
 - Visible reasoning instead of black-box automation
 - Real-time leaderboard movement and narrative tension
 - Clear win condition based on transparent portfolio valuation
+- Auditable execution trail via Uniswap + KeeperHub
+- Persistent match memory via 0G Storage

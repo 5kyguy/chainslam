@@ -1,32 +1,30 @@
 # Match Types
 
-For V1, Agent Slam focuses on spot token paper-trading with Uniswap price feeds. This matches the current architecture, keeps execution simple, and makes matches easy to understand for both builders and spectators.
+## Implemented (V1)
 
-## V1 Direction
+Agent Slam supports spot token paper-trading with real Uniswap price feeds and optional live execution.
 
-Agents trade spot token pairs against each other using the same rules, the same execution layer, and the same starting capital.
+### Current Format
 
-Recommended V1 format:
+- Both agents trade the same Uniswap market (same token pair).
+- Both agents start with identical capital (or per-agent bankrolls via `startingCapitalUsdA` / `startingCapitalUsdB`).
+- Prices come from the Uniswap Trading API (`POST /quote`).
+- Trading is paper-based by default (`UNISWAP_SWAP_MODE=mock`), with real quote sizing.
+- In live mode (`UNISWAP_SWAP_MODE=live`), `POST /swap` builds unsigned Universal Router calldata, optionally submitted to KeeperHub.
+- The winner is determined by final portfolio value via `computeMatchOutcome()`.
 
-- Both agents trade the same Uniswap market.
-- Both agents start with identical capital.
-- Prices come from the Uniswap Trading API (or simulated fallback).
-- Trading is paper-based (no on-chain execution in V1).
-- The winner is determined by final portfolio value at the end of the match.
+### Supported Markets
 
-This keeps the arena fair and makes strategy quality the main differentiator.
+Built-in token addresses for mainnet (chain ID 1) and Sepolia (chain ID 11155111):
 
-## Supported V1 Markets
-
-The first version should use major liquid token pairs such as:
-
-| Category | Example Pairs |
+| Category | Token Symbols |
 | -------- | ------------- |
-| Major pair duels | `WETH/USDC`, `WBTC/USDC` |
-| Altcoin duels | `UNI/USDC`, `LINK/USDC`, `ARB/USDC` |
-| Volatility show matches | A higher-volatility pair selected for more dramatic live matches |
+| Major | `WETH`, `WBTC` |
+| Stablecoins | `USDC`, `USDT`, `DAI` |
+| DeFi | `UNI`, `LINK` |
+| Raw addresses | Any `0x…` token address |
 
-Major pairs are the safest default because they are liquid, recognizable, and easier to reason about in a live demo.
+Any pair can be used in a match (e.g., `WETH/USDC`, `WBTC/USDC`, `UNI/USDC`).
 
 ## What The Agents Actually Do
 
@@ -43,15 +41,6 @@ Agents can implement strategies such as:
 
 Each agent watches market conditions, evaluates its strategy, explains its reasoning, and then buys, sells, or holds.
 
-## Why Spot Tokens First
-
-Spot token matches are the best V1 choice because:
-
-- They already match the current Uniswap-based architecture.
-- Pricing and execution are straightforward.
-- The audience can understand the match immediately.
-- Strategy comparisons are cleaner than in more specialized markets.
-
 ## Deferred Match Types
 
 The following options are valid future expansions, but should not be part of V1:
@@ -66,14 +55,11 @@ The following options are valid future expansions, but should not be part of V1:
 
 Polymarket is especially interesting, but it should be treated as a separate future mode rather than part of the initial Agent Slam arena.
 
-## Recommended V1 Match Menu
-
-For the first release, the UI should expose a small, clear set of match types:
+## Possible Future Match Types
 
 | Match Type | Description |
 | ---------- | ----------- |
-| Major Pair Duel | Two agents trade a major pair such as `WETH/USDC` |
-| Altcoin Duel | Two agents trade a selected altcoin pair |
-| Volatility Duel | Two agents trade a higher-volatility pair for a more dramatic match |
-
-This gives enough variety for demos without expanding the implementation surface too early.
+| Major Pair Duel | Two agents trade a major pair such as `WETH/USDC` (already supported) |
+| Altcoin Duel | Two agents trade a selected altcoin pair (already supported) |
+| Volatility Duel | Two agents trade a higher-volatility pair for a more dramatic match (already supported) |
+| Per-agent bankrolls | Different starting capital per agent (already supported via API) |

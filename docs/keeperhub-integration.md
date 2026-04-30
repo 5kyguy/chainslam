@@ -1,19 +1,27 @@
 # KeeperHub Integration
 
-Agent Slam uses KeeperHub as the execution reliability layer for agent-generated trades.
+Agent Slam uses KeeperHub as the execution reliability layer for agent-generated trades. This is an **optional** integration — the arena runs fully in paper-trading mode by default.
 
-The arena remains the referee: agents decide whether to buy, sell, or hold, and the backend records portfolio/PnL for the match. When live execution is enabled, the same trade intent also flows through Uniswap and KeeperHub so the demo can show auditable onchain execution.
+The arena remains the referee: agents decide whether to buy, sell, or hold, and the backend records portfolio/PnL for the match. When live execution is enabled (`UNISWAP_SWAP_MODE=live` + `KEEPERHUB_API_KEY`), the same trade intent also flows through Uniswap and KeeperHub so the demo can show auditable onchain execution.
+
+## Implementation
+
+- **`integrations/keeperhub.ts`** — `KeeperHubClient` class: decodes Universal Router `execute(bytes,bytes[],uint256)` / `execute(bytes,bytes[])` / proxy 6-arg calldata using `viem` ABI decoding. Submits structured contract calls to `POST /execute/contract-call`. Supports 10+ chain ID to KeeperHub network mappings. Includes `normalizeKeeperHubStatus()` for 15+ status strings.
+- **`services/keeperhub-execution-poller.ts`** — Background poller: registers pending executions, polls `GET /execute/{executionId}/status` at configurable intervals, persists receipts and tx hashes to the store, publishes WS updates, marks 12-consecutive-failure streaks as failed.
 
 ## Flow
 
 1. A Python agent receives a tick and returns a buy/sell decision.
-2. The backend sizes the trade under the match risk rules.
-3. `UniswapClient` requests a real quote and, in live mode, calls Uniswap `/swap` to build unsigned Universal Router calldata.
-4. `KeeperHubClient` decodes the Universal Router `execute(...)` calldata with `viem` and submits it to KeeperHub `POST /execute/contract-call`.
-5. `KeeperHubExecutionPoller` polls `GET /execute/{executionId}/status`.
-6. Trade events are updated with `keeperhubSubmissionId`, normalized status, retries, receipt metadata, explorer link, and final transaction hash when available.
+2. The backend sizes the trade under the match risk rules (`min(50% of starting capital, MAX_TRADE_USD_ABSOLUTE)`).
+3. `UniswapClient` requests a real quote via `POST /quote` and checks approval via `POST /check_approval`.
+4. In live mode, `UniswapClient` calls `POST /swap` to build unsigned Universal Router calldata.
+5. `KeeperHubClient.decodeUniversalRouterExecuteCalldata()` decodes the calldata with `viem`.
+6. `KeeperHubClient.submitUnsignedSwap()` submits the decoded call to `POST /execute/contract-call`.
+7. `KeeperHubExecutionPoller.register()` adds the execution to the pending set and starts polling.
+8. On status change, the poller updates the store and publishes a `trade_executed` WS event with updated metadata.
+9. Trade events include `keeperhubSubmissionId`, normalized status, retry count, explorer link, and final tx hash.
 
-The core API remains resilient: if KeeperHub submission or polling fails, the match loop continues and the trade records `lastExecutionError`.
+The core match loop remains resilient: if KeeperHub submission or polling fails, the match continues and the trade records `lastExecutionError`.
 
 ## Demo Settings
 
