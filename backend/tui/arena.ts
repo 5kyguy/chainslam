@@ -196,8 +196,8 @@ function selectStrategies(
   screen: blessed.Widgets.Screen,
   strategies: StrategyOption[],
 ): Promise<{ strategyA: string; strategyB: string }> {
-  const defaultA = Math.max(0, STRATEGY_KEYS.indexOf(STRATEGY_A));
-  const defaultB = Math.max(0, STRATEGY_KEYS.indexOf(STRATEGY_B));
+  const defaultA = Math.max(0, strategies.findIndex((s) => s.id === STRATEGY_A));
+  const defaultB = Math.max(0, strategies.findIndex((s) => s.id === STRATEGY_B));
   const strategyLabel = (s: StrategyOption) => `${s.name} (${s.id}) — ${s.riskProfile}`;
 
   return new Promise((resolve) => {
@@ -842,7 +842,14 @@ function runLiveMatch(
 
         ws.on("message", (raw: Buffer) => {
           if (matchEnded) return;
-          const env = JSON.parse(raw.toString()) as Envelope;
+          let env: Envelope;
+          try {
+            env = JSON.parse(raw.toString()) as Envelope;
+          } catch {
+            log(`{red-fg}Received malformed WebSocket message{/}`);
+            screen.render();
+            return;
+          }
 
           if (env.event === "snapshot") {
             const m = env.payload as MatchPayload;
