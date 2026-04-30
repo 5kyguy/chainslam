@@ -11,6 +11,7 @@ import {
   type UniswapQuoteResponse,
 } from "../integrations/uniswap.js";
 import { normalizeKeeperHubStatus, type KeeperHubClient } from "../integrations/keeperhub.js";
+import { type Permit2Signer } from "../integrations/permit2-signer.js";
 import { KeeperHubExecutionPoller } from "./keeperhub-execution-poller.js";
 import { fromBaseUnits, tokenDecimals, toBaseUnits } from "../integrations/tokens.js";
 import type {
@@ -59,6 +60,7 @@ export class RealMatchService implements MatchService {
     private readonly keeperHub?: KeeperHubClient,
     private readonly keeperHubPoller?: KeeperHubExecutionPoller,
     private readonly zeroGMemory?: ZeroGMemoryService,
+    private readonly permit2Signer?: Permit2Signer,
   ) {}
 
   createMatch(input: MatchCreateRequest): MatchState {
@@ -462,7 +464,11 @@ export class RealMatchService implements MatchService {
       };
     }
     try {
-      const built = await this.uniswap.createProtocolSwap(raw);
+      let signature: string | undefined;
+      if (this.permit2Signer && raw.permitData) {
+        signature = await this.permit2Signer.signPermitData(raw.permitData);
+      }
+      const built = await this.uniswap.createProtocolSwap(raw, signature ? { signature } : undefined);
       return {
         executionMode: "uniswap_live_swap",
         swapRequestId: built.requestId,

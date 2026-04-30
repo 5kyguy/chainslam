@@ -38,6 +38,9 @@ function minimalConfig(): AppConfig {
       maxTradeUsdAbsolute: Number.POSITIVE_INFINITY,
       defaultPerAgentStartingCapitalUsd: 1000,
     },
+    wallet: {
+      privateKey: "",
+    },
     zerog: {
       enabled: true,
       evmRpc: "",

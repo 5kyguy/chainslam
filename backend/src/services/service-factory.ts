@@ -9,6 +9,7 @@ import { KeeperHubClient } from "../integrations/keeperhub.js";
 import { KeeperHubExecutionPoller } from "./keeperhub-execution-poller.js";
 import { ZeroGKvClient } from "../integrations/zerog.js";
 import { ZeroGMemoryService } from "./zerog-memory-service.js";
+import { Permit2Signer, isValidPrivateKey } from "../integrations/permit2-signer.js";
 
 export interface MatchServiceBundle {
   matchService: MatchService;
@@ -21,16 +22,30 @@ export function buildMatchServiceBundle(
   store: Store,
   processManager: AgentProcessManager,
 ): MatchServiceBundle {
+  let permit2Signer: Permit2Signer | undefined;
+  if (config.wallet.privateKey.trim().length > 0) {
+    if (isValidPrivateKey(config.wallet.privateKey)) {
+      permit2Signer = new Permit2Signer({ privateKey: config.wallet.privateKey });
+      console.log(`[Wallet] Permit2 signer ready for address: ${permit2Signer.address}`);
+    } else {
+      console.warn("[Wallet] WALLET_PRIVATE_KEY is set but invalid — Permit2 signing disabled.");
+    }
+  }
+
+  const swapperAddress = permit2Signer
+    ? permit2Signer.address
+    : config.uniswap.swapperAddress;
+
   const uniswap = new UniswapClient({
     apiKey: config.uniswap.apiKey,
     baseUrl: config.uniswap.baseUrl,
     chainId: config.uniswap.chainId,
-    swapperAddress: config.uniswap.swapperAddress,
+    swapperAddress,
     timeoutMs: config.uniswap.timeoutMs,
     maxRetries: config.uniswap.maxRetries,
     permit2Disabled: config.uniswap.permit2Disabled,
     universalRouterVersion: config.uniswap.universalRouterVersion,
-    permitSignature: config.uniswap.permitSignature,
+    permitSignature: permit2Signer ? "" : config.uniswap.permitSignature,
   });
 
   const khCfg = config.keeperhub;
@@ -67,6 +82,7 @@ export function buildMatchServiceBundle(
     keeperHub,
     keeperHubPoller,
     zeroGMemory,
+    permit2Signer,
   );
 
   return { matchService, keeperHubPoller };

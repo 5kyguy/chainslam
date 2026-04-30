@@ -12,6 +12,7 @@ import { buildMatchServiceBundle } from "./services/service-factory.js";
 import { AgentService } from "./services/agent-service.js";
 import { AgentProcessManager } from "./agents/process-manager.js";
 import { createStore } from "./store/index.js";
+import { isValidPrivateKey } from "./integrations/permit2-signer.js";
 import type { MatchService } from "./services/match-service.js";
 import type { Store } from "./store/store.js";
 
@@ -37,6 +38,15 @@ export async function createApp() {
 
   const { matchService, keeperHubPoller } = buildMatchServiceBundle(config, agentService, store, processManager);
   keeperHubPoller?.start();
+
+  if (config.wallet.privateKey.trim().length > 0 && isValidPrivateKey(config.wallet.privateKey)) {
+    if (config.uniswap.swapMode !== "live") {
+      console.warn("[Wallet] WALLET_PRIVATE_KEY is set but UNISWAP_SWAP_MODE is not 'live' — on-chain swaps will not execute.");
+    }
+    if (config.keeperhub.apiKey.trim().length === 0) {
+      console.warn("[Wallet] WALLET_PRIVATE_KEY is set but KEEPERHUB_API_KEY is empty — KeeperHub is required to execute signed swaps on-chain.");
+    }
+  }
 
   app.decorate("matchService", matchService);
   app.decorate("agentService", agentService);
