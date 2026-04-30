@@ -14,6 +14,11 @@ export const KNOWN_TOKENS_BY_CHAIN: Record<number, Record<string, string>> = {
     WETH: "0xfff9976782d46cc05630d1f6ebab18b2324d6b14",
     USDC: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
   },
+  421614: {
+    ETH: "0x0000000000000000000000000000000000000000",
+    WETH: "0xE591bf0A0CF924A0674d7792db046B23CE50fC27",
+    USDC: "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",
+  },
 };
 
 export const KNOWN_TOKENS: Record<string, string> = {

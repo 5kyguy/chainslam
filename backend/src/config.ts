@@ -64,6 +64,11 @@ export interface AppConfig {
     /** Default per-agent starting USD when POST body omits capital fields. */
     defaultPerAgentStartingCapitalUsd: number;
   };
+  /** On-chain wallet — when set, signs Permit2 EIP-712 messages for live Uniswap swaps via KeeperHub. */
+  wallet: {
+    /** EOA private key (hex, with or without 0x prefix). Must hold gas + token balance on the configured chain. */
+    privateKey: string;
+  };
   /** 0G Storage — optional agent/match memory (KV) mirror for Phase 7C. */
   zerog: {
     enabled: boolean;
@@ -161,6 +166,9 @@ export function getConfig(): AppConfig {
       minTradeUsd: envNumber("MIN_TRADE_USD", 0.1),
       maxTradeUsdAbsolute: envNumberOrInfinity("MAX_TRADE_USD_ABSOLUTE"),
       defaultPerAgentStartingCapitalUsd: envNumber("DEFAULT_PER_AGENT_STARTING_CAPITAL_USD", 1000),
+    },
+    wallet: {
+      privateKey: process.env.WALLET_PRIVATE_KEY ?? "",
     },
     zerog: {
       enabled: envBool("ZEROG_ENABLED", true),
