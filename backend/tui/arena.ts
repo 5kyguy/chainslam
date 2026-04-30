@@ -453,9 +453,7 @@ function configureMatch(screen: blessed.Widgets.Screen, defaults: MatchConfig): 
     };
 
     const onEnter = () => {
-      if (activeField === 2) {
-        capital = capInput.getValue().trim();
-      }
+      capital = capInput.getValue().trim();
       doCleanup();
       const parsed = parseInt(capital, 10);
       resolve({
