@@ -115,6 +115,21 @@ function formatTime(seconds: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+function keeperHubStatusColor(status?: string, error?: string): string {
+  if (error) return "red-fg";
+  const normalized = (status ?? "").trim().toLowerCase();
+  if (["completed", "complete", "success", "succeeded", "executed", "mined"].includes(normalized)) {
+    return "green-fg";
+  }
+  if (["failed", "failure", "error", "errored", "cancelled", "canceled", "rejected", "expired", "timeout", "timed_out"].includes(normalized)) {
+    return "red-fg";
+  }
+  if (["queued", "created", "submitted", "pending", "running", "processing", "executing", "in_progress"].includes(normalized)) {
+    return "yellow-fg";
+  }
+  return "cyan-fg";
+}
+
 function cleanupKeys(screen: blessed.Widgets.Screen, bindings: Record<string, () => void>) {
   for (const key of Object.keys(bindings)) {
     screen.unkey(key, bindings[key]);
@@ -870,8 +885,9 @@ function runLiveMatch(
             log(`  {cyan-fg}TRADE{/} ${t.contender}: ${t.sold.amount.toFixed(2)} ${t.sold.token} → ${t.bought.amount.toFixed(6)} ${t.bought.token} (gas: $${t.gasUsd})`);
             if (t.executionMode === "uniswap_live_swap" || t.keeperhubSubmissionId || t.keeperhubStatus || t.lastExecutionError) {
               const status = t.keeperhubStatus ?? (t.keeperhubSubmissionId ? "submitted" : "not-submitted");
+              const statusColor = keeperHubStatusColor(t.keeperhubStatus, t.lastExecutionError);
               const retries = t.keeperhubRetryCount !== undefined ? ` retries=${t.keeperhubRetryCount}` : "";
-              log(`  {green-fg}KeeperHub{/} ${status}${t.keeperhubSubmissionId ? ` id=${t.keeperhubSubmissionId}` : ""}${retries}`);
+              log(`  {${statusColor}}KeeperHub ${status.toUpperCase()}{/}${t.keeperhubSubmissionId ? ` id=${t.keeperhubSubmissionId}` : ""}${retries}`);
               if (t.onChainTxHash) log(`  {green-fg}Onchain{/} ${t.onChainTxHash}`);
               if (t.keeperhubTransactionLink) log(`  {blue-fg}${t.keeperhubTransactionLink}{/}`);
               if (t.lastExecutionError) log(`  {red-fg}${t.lastExecutionError}{/}`);

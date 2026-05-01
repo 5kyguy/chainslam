@@ -35,7 +35,7 @@ cp backend/.env.example backend/.env
 cd backend && npm run dev
 ```
 
-Set `UNISWAP_API_KEY=...` to enable Uniswap Trading API price feeds. For the KeeperHub prize demo, run a mock match first, then set `UNISWAP_SWAP_MODE=live`, `KEEPERHUB_API_KEY=...`, and a very low `MAX_TRADE_USD_ABSOLUTE` for one canary execution. For the 0G prize demo, set `ZEROG_*` credentials and verify `txHash` in logs after a match.
+Set `UNISWAP_API_KEY=...` to enable Uniswap Trading API price feeds. For the KeeperHub prize demo, run a mock match first, then switch to the [Sepolia KeeperHub canary runbook](keeperhub-integration.md#sepolia-canary-runbook): live swap mode, KeeperHub wallet as `UNISWAP_SWAPPER_ADDRESS`, narrow USDC allowance, and `MAX_TRADE_USD_ABSOLUTE=0.1`. For the 0G prize demo, set `ZEROG_*` credentials and verify `txHash` in logs after a match.
 
 ## What The Audience Should Understand
 
@@ -76,7 +76,7 @@ npm run tui -- --strategy-a=momentum --strategy-b=mean_reverter --duration=300 -
 | `0:40` | Point out that the backend just spawned two Python processes, each running a different strategy |
 | `1:00` | Highlight the live feed and explain that each agent publishes plain-language reasoning |
 | `1:30` | Show at least one trade flowing through and appearing in the feed with PnL impact on the contender panels |
-| `2:00` | For KeeperHub mode: show the execution id/status/tx hash in the trade event |
+| `2:00` | For KeeperHub mode: show execution id, completed status, Etherscan tx link, and `GET /api/matches/:id/executions` |
 | `2:00` | For 0G mode: explain that match events are being persisted to 0G Storage KV |
 | `2:40` | Let the match end and show the winner announcement with final portfolio values |
 | `3:00` | Show the memory API: `curl localhost:8787/api/matches/:id/memory` or `localhost:8787/api/matches/:id/memory/zg` |
@@ -104,7 +104,7 @@ The fastest ways to lose clarity in the demo are:
 - Slow or unreliable market/execution updates
 - No visible explanation for why an agent traded
 - No obvious final winner state
-- Live execution failing without a clear fallback story; keep `UNISWAP_SWAP_MODE=mock` ready and show the recorded KeeperHub run if needed
+- Live execution failing without a clear fallback story; keep `UNISWAP_SWAP_MODE=mock` ready and keep the verified Sepolia KeeperHub tx link from the runbook available
 
 The demo should bias toward simplicity and observability over ambitious market complexity.
 

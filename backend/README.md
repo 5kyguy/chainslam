@@ -108,8 +108,10 @@ If submission fails (decode error, HTTP error, wallet not configured on KeeperHu
 **Safe rollout (e.g. `$1` per agent):**
 
 1. Run with `UNISWAP_SWAP_MODE=mock`, `MIN_TRADE_USD=0.1`, `MAX_TRADE_USD_ABSOLUTE=1`, and create a match with `startingCapitalUsd: 1` (or `startingCapitalUsdA` / `startingCapitalUsdB`). Confirm logs and trade sizes before spending gas.
-2. Fund the Uniswap swapper / KeeperHub execution wallet with **minimal** test balances and narrow token approvals.
+2. Fund the Uniswap swapper / KeeperHub execution wallet with **minimal** test balances and narrow token approvals. For Sepolia `WETH/USDC`, the KeeperHub wallet needs Sepolia ETH for gas, Sepolia USDC for buys, and USDC allowance to the Uniswap spender returned by `/check_approval`.
 3. Set `UNISWAP_SWAP_MODE=live` and `KEEPERHUB_API_KEY` only after step 1 looks correct; run one short match as a canary and verify chain receipts / `onChainTxHash`.
+
+See [KeeperHub integration](../docs/keeperhub-integration.md) for the Sepolia approval/canary runbook and allowance strategy.
 
 ### 0G Storage — agent/match memory (Phase 7C, optional)
 
