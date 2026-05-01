@@ -15,3 +15,9 @@ backend/dist/
 backend/node_modules/
 backend/package-lock.json
 backend/.env
+
+# Frontend
+frontend/dist/
+frontend/node_modules/
+frontend/.env
+frontend/*.tsbuildinfo

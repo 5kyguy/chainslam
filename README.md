@@ -25,6 +25,15 @@ Watch a live match in the terminal:
 cd backend && npm run tui -- --strategy-a=momentum --strategy-b=mean_reverter --duration=60
 ```
 
+Open the browser cockpit:
+
+```bash
+cd frontend && npm install
+VITE_API_BASE_URL=http://127.0.0.1:8787 npm run dev
+```
+
+Frontend default: `http://127.0.0.1:5173`
+
 See [backend/README.md](backend/README.md) for full setup details.
 
 ## Docs
