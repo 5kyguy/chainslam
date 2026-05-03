@@ -18,7 +18,7 @@ class DCAStrategy(Strategy):
         return StrategySignal(
             ActionType.BUY,
             amount,
-            f"DCA: buying ${amount:.0f} at tick {ctx.tick_number}. Accumulating regardless of price.",
+            f"DCA: buying ${amount:.2f} at tick {ctx.tick_number}. Accumulating regardless of price.",
             0.85,
         )
 
