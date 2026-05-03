@@ -27,6 +27,24 @@ cd backend && npm run tui -- --strategy-a=momentum --strategy-b=mean_reverter --
 
 See [backend/README.md](backend/README.md) for full setup details.
 
+## One-Command Local Live Demo
+
+For reviewers who want the full local stack with live Sepolia Uniswap, KeeperHub, 0G, backend, and frontend:
+
+```bash
+./scripts/start-live-demo.sh
+```
+
+If the KeeperHub wallet needs USDC allowance for the Sepolia canary:
+
+```bash
+./scripts/start-live-demo.sh --approve
+```
+
+Then open `http://localhost:3000`, go to **Strategies** or **Matches**, create a `WETH/USDC` match with `$1` capital and `30` seconds, and watch the arena.
+
+See [Local Live Demo Runbook](docs/local-live-demo.md) for required `.env` values and troubleshooting.
+
 ## Docs
 
 - [Project overview](docs/overview.md)

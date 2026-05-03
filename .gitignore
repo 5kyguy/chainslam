@@ -15,3 +15,10 @@ backend/dist/
 backend/node_modules/
 backend/package-lock.json
 backend/.env
+
+# Frontend/runtime
+agentslamui/node_modules/
+agentslamui/.next/
+agentslamui/.env.local
+.agentslam-run/
+backend/.env.live-demo.bak.*

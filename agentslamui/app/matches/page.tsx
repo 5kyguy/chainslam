@@ -196,6 +196,9 @@ export default function MatchesPage() {
             <div className="cell s2">
               <div className="body-xs" style={{ marginBottom: 6 }}>Capital</div>
               <input type="number" min={1} value={capital} onChange={(e) => setCapital(Number(e.target.value))} style={fieldStyle} />
+              <div className="body-xs" style={{ marginTop: 8, color: "var(--gold)" }}>
+                Live Sepolia trades are capped by backend env; use higher capital for clearer PnL spread.
+              </div>
             </div>
             <div className="cell s2">
               <div className="body-xs" style={{ marginBottom: 6 }}>Seconds</div>
